@@ -8,12 +8,12 @@ Fap-Bird is a web version of the iconic Flappy Bird game released many years ago
 ### Main Menu
 | PC | Mobile |
 | :---: | :---: |
-| <img src="assets/screenshots/mobile view.jpeg" width="400" alt="PC Main Menu"> | <img src="assets/screenshots/WhatsApp%20Image%202026-03-09%20at%202.08.05%20AM%20(1).jpeg" width="200" alt="Mobile Main Menu"> |
+| <img src="assets/screenshots/Desktop.png" width="400" alt="PC Main Menu"> | <img src="assets/screenshots/mobile%20view.jpeg" width="200" alt="Mobile Main Menu"> |
 
 ### Game Over
 | Mobile |
 | :---: |
-| <img src="assets/screenshots/Desktop.png" width="200" alt="Mobile Game Over"> |
+| <img src="assets/screenshots/WhatsApp%20Image%202026-03-09%20at%202.08.05%20AM.jpeg" width="200" alt="Mobile Game Over"> |
 
 ## Features
 * **Simple Controls:** Mouse click, Touch screen, Spacebar, W, Up Arrow, or Enter.
@@ -48,9 +48,5 @@ python3 -m http.server 3000
 ## Credit for assets
 
 Graphical and audio assets inspired by the original Flappy Bird game.
-
-```
-
-Just copy and paste this into your `README.md`, commit it along with your `assets/screenshots/` folder, and your GitHub page will look incredibly professional! Ready to move on to modding the game code?
 
 ```
