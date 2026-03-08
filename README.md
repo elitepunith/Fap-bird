@@ -10,11 +10,6 @@ Fap-Bird is a web version of the iconic Flappy Bird game released many years ago
 | :---: | :---: |
 | <img src="assets/screenshots/Desktop.png" width="400" alt="PC Main Menu"> | <img src="assets/screenshots/mobile%20view.jpeg" width="200" alt="Mobile Main Menu"> |
 
-### Game Over
-| Mobile |
-| :---: |
-| <img src="assets/screenshots/WhatsApp%20Image%202026-03-09%20at%202.08.05%20AM.jpeg" width="200" alt="Mobile Game Over"> |
-
 ## Features
 * **Simple Controls:** Mouse click, Touch screen, Spacebar, W, Up Arrow, or Enter.
 * **Advanced Performance:** Fixed-timestep game loop and pre-rendered offscreen canvas caching for zero-lag performance on any device.
