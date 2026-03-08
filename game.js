@@ -1,11 +1,9 @@
 /*
-  game.js - Fap-Bird (Production Release)
-  ---------------------------------------
-  Repository: https://github.com/elitepunith/Fap-bird
-  
-  This version implements a robust ES6 class architecture, a fixed-timestep 
-  game loop for consistent physics across all device refresh rates (60Hz, 120Hz, 144Hz), 
-  and Promise-based asset loading with strict error handling.
+  game.js - Fap-Bird (Production Release - High Speed Edition)
+  ------------------------------------------------------------
+  This version features a robust ES6 class architecture, a fixed-timestep 
+  game loop for consistent physics across all refresh rates (60Hz/120Hz/144Hz), 
+  Promise-based asset loading, and tightly tuned, aggressive arcade physics.
 */
 
 'use strict';
@@ -15,13 +13,13 @@ const CONFIG = {
   height: 568,
   fps: 60, // Fixed target for physics calculations
   physics: {
-    gravity: 0.28,
-    thrust: 7.2,
-    maxFallSpeed: 10,
-    initialScrollSpeed: 2.0,
-    maxScrollSpeed: 3.6,
-    pipeGap: 120,
-    pipeSpawnInterval: 90 // Frames between pipes (~1.5s at 60fps)
+    gravity: 0.45,           // Heavier bird for a less floaty feel
+    thrust: 8.5,             // Stronger jump to compensate for higher gravity
+    maxFallSpeed: 12,        // Higher terminal velocity
+    initialScrollSpeed: 3.0, // Faster starting speed
+    maxScrollSpeed: 6.0,     // Much higher top speed
+    pipeGap: 135,            // Slightly larger gap for the higher speed
+    pipeSpawnInterval: 65    // Spawn pipes faster to match the scroll speed
   },
   states: {
     READY: 0,
@@ -137,11 +135,15 @@ class AssetManager {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Game Entities
+// 2. Visual Effects
 // ---------------------------------------------------------------------------
 
 class ScreenShake {
   constructor() {
+    this.reset();
+  }
+
+  reset() {
     this.x = 0;
     this.y = 0;
     this.power = 0;
@@ -215,6 +217,10 @@ class ParticleSystem {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 3. Game Entities
+// ---------------------------------------------------------------------------
+
 class Environment {
   constructor(assets) {
     this.assets = assets;
@@ -227,7 +233,7 @@ class Environment {
   update(state, speed) {
     if (state !== CONFIG.states.PLAY) return;
     this.scrollX += speed;
-    if (this.scrollX >= this.spriteWidth) this.scrollX = 0;
+    if (this.scrollX >= this.spriteWidth) this.scrollX -= this.spriteWidth;
   }
 
   draw(ctx) {
@@ -313,10 +319,11 @@ class PipeManager {
         game.addScore();
         this.particles.spawn(bird.x + 18, bird.y - bird.radius, 7, ['#FFD700', '#FFFFFF', '#FFA500', '#FFE066']);
         
-        // Gentle difficulty scaling
-        if (game.score % 10 === 0) {
-          game.scrollSpeed = Math.min(game.scrollSpeed + 0.18, CONFIG.physics.maxScrollSpeed);
-          this.spawnInterval = Math.max(this.spawnInterval - 2, 78);
+        // Aggressive difficulty scaling: Speed up every 5 points
+        if (game.score % 5 === 0) {
+          game.scrollSpeed = Math.min(game.scrollSpeed + 0.35, CONFIG.physics.maxScrollSpeed);
+          // Decrease the spawn interval so pipes don't get too far apart at high speeds
+          this.spawnInterval = Math.max(this.spawnInterval - 4, 40); 
         }
       }
     }
@@ -367,7 +374,7 @@ class Bird {
 
   flap() {
     if (!this.alive || this.y - this.radius < 0) return;
-    this.assets.audio.flap.play(0.55);
+    if (this.assets.audio.flap) this.assets.audio.flap.play(0.55);
     this.vy = -CONFIG.physics.thrust;
     this.particles.spawn(this.x - this.radius - 4, this.y + 2, 4, ['#ffffff', '#e8f8e8']);
   }
@@ -383,14 +390,14 @@ class Bird {
         this.vy = Math.min(this.vy + CONFIG.physics.gravity, CONFIG.physics.maxFallSpeed);
         this.y += this.vy;
         
-        // Rotation
+        // Rotation logic
         if (this.vy < 0) {
           this.rotation = Math.max(-30, (-30 * this.vy) / (-CONFIG.physics.thrust));
         } else {
           this.rotation = Math.min(90, (90 * this.vy) / CONFIG.physics.maxFallSpeed);
         }
 
-        // Hit Ceiling
+        // Ceiling bounce prevention
         if (this.y - this.radius <= 0) {
           this.y = this.radius;
           this.vy = 0;
@@ -414,7 +421,7 @@ class Bird {
   die() {
     if (!this.alive) return;
     this.alive = false;
-    this.assets.audio.hit.play(0.7);
+    if (this.assets.audio.hit) this.assets.audio.hit.play(0.7);
     this.shake.trigger(8, 18);
     this.particles.spawn(this.x, this.y, 22, ['#FF5555', '#FF8800', '#FFD700', '#ffffff']);
   }
@@ -439,7 +446,7 @@ class Bird {
 }
 
 // ---------------------------------------------------------------------------
-// 3. UI Manager
+// 4. UI Manager
 // ---------------------------------------------------------------------------
 
 class UIManager {
@@ -459,7 +466,7 @@ class UIManager {
     ctx.restore();
   }
 
-  drawGetReady(ctx, frameCount, bestScore) {
+  drawGetReady(ctx, bestScore) {
     const sp = this.assets.images.getReady;
     if (sp) {
       const scale = CONFIG.width / 276;
@@ -485,7 +492,7 @@ class UIManager {
     }
   }
 
-  drawGameOver(ctx, score, bestScore, frameCount) {
+  drawGameOver(ctx, score, bestScore) {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.44)';
     ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
 
@@ -512,7 +519,7 @@ class UIManager {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Main Game Loop (Fixed Timestep Controller)
+// 5. Main Game Loop (Fixed Timestep Controller)
 // ---------------------------------------------------------------------------
 
 class Game {
@@ -559,27 +566,34 @@ class Game {
   }
 
   handleResize() {
-    const scale = Math.min(window.innerWidth / CONFIG.width, window.innerHeight / CONFIG.height);
+    const scaleX = window.innerWidth / CONFIG.width;
+    const scaleY = window.innerHeight / CONFIG.height;
+    const scale = Math.min(scaleX, scaleY);
     this.canvas.style.transform = `scale(${scale})`;
   }
 
   bindEvents() {
     const triggerInput = (e) => {
+      if (e && e.cancelable) e.preventDefault();
+      
       const now = Date.now();
-      if (now - this.lastInput < 90) return; // Debounce
+      if (now - this.lastInput < 90) return; // Debounce to prevent double-taps
       this.lastInput = now;
 
       switch (this.state) {
         case CONFIG.states.READY:
           this.state = CONFIG.states.PLAY;
-          this.assets.audio.start.play(0.5);
+          if (this.assets.audio.start) this.assets.audio.start.play(0.5);
           this.bird.flap();
           break;
         case CONFIG.states.PLAY:
           this.bird.flap();
           break;
         case CONFIG.states.DEAD:
-          if (this.bird.vy === 0) this.reset();
+          // Prevent instant restart upon dying
+          if (this.bird.vy === 0 && now - this.lastInput > 300) {
+            this.reset();
+          }
           break;
       }
     };
@@ -587,8 +601,7 @@ class Game {
     this.canvas.addEventListener('pointerdown', triggerInput);
     document.addEventListener('keydown', (e) => {
       if (['Space', 'ArrowUp', 'KeyW', 'Enter'].includes(e.code)) {
-        e.preventDefault();
-        triggerInput();
+        triggerInput(e);
       }
     });
   }
@@ -601,12 +614,13 @@ class Game {
     this.particles.list = [];
     this.bird.reset();
     this.pipes.reset();
+    this.shake.reset();
     this.bestScore = parseInt(localStorage.getItem('fapbird_best') || '0', 10);
   }
 
   addScore() {
     this.score++;
-    this.assets.audio.score.play();
+    if (this.assets.audio.score) this.assets.audio.score.play();
   }
 
   triggerDeath() {
@@ -630,11 +644,13 @@ class Game {
     this.pipes.update(this.state, this.scrollSpeed, this);
     this.bird.update(this.state, this.environment.groundY, this.frameCount);
 
-    // Ground Collision
+    // Ground Collision Logic
     if (this.bird.y + this.bird.radius >= this.environment.groundY) {
-      if (this.state === CONFIG.states.PLAY) this.triggerDeath();
+      if (this.state === CONFIG.states.PLAY) {
+        this.triggerDeath();
+      }
       if (this.state === CONFIG.states.DEAD && !this.deathSoundPlayed) {
-        this.assets.audio.die.play(0.65);
+        if (this.assets.audio.die) this.assets.audio.die.play(0.65);
         this.deathSoundPlayed = true;
       }
     }
@@ -647,16 +663,16 @@ class Game {
     this.ctx.save();
     this.shake.apply(this.ctx);
 
-    // Draw Order
+    // Draw Order: Background -> Pipes -> Ground -> Bird -> Particles -> UI
     this.environment.draw(this.ctx);
     this.pipes.draw(this.ctx, this.environment.groundY);
     this.bird.draw(this.ctx);
     this.particles.draw(this.ctx);
 
     // UI Overlays
-    if (this.state === CONFIG.states.READY) this.ui.drawGetReady(this.ctx, this.frameCount, this.bestScore);
+    if (this.state === CONFIG.states.READY) this.ui.drawGetReady(this.ctx, this.bestScore);
     if (this.state === CONFIG.states.PLAY)  this.ui.drawScore(this.ctx, this.score);
-    if (this.state === CONFIG.states.DEAD)  this.ui.drawGameOver(this.ctx, this.score, this.bestScore, this.frameCount);
+    if (this.state === CONFIG.states.DEAD)  this.ui.drawGameOver(this.ctx, this.score, this.bestScore);
 
     this.ctx.restore();
   }
@@ -664,7 +680,7 @@ class Game {
   loop(currentTime) {
     if (this.lastTime) {
       let deltaTime = currentTime - this.lastTime;
-      if (deltaTime > 250) deltaTime = 250; // Cap lag spikes
+      if (deltaTime > 250) deltaTime = 250; // Cap lag spikes so the game doesn't crash on tab return
       
       this.accumulator += deltaTime;
 
