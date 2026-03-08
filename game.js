@@ -3,7 +3,7 @@
   ------------------------------------------------------------
   This version features a robust ES6 class architecture, a fixed-timestep 
   game loop for consistent physics across all refresh rates (60Hz/120Hz/144Hz), 
-  Promise-based asset loading, and tightly tuned, aggressive arcade physics.
+  Promise-based asset loading, tightly tuned arcade physics, and fixed restart logic.
 */
 
 'use strict';
@@ -322,7 +322,6 @@ class PipeManager {
         // Aggressive difficulty scaling: Speed up every 5 points
         if (game.score % 5 === 0) {
           game.scrollSpeed = Math.min(game.scrollSpeed + 0.35, CONFIG.physics.maxScrollSpeed);
-          // Decrease the spawn interval so pipes don't get too far apart at high speeds
           this.spawnInterval = Math.max(this.spawnInterval - 4, 40); 
         }
       }
@@ -590,8 +589,9 @@ class Game {
           this.bird.flap();
           break;
         case CONFIG.states.DEAD:
-          // Prevent instant restart upon dying
-          if (this.bird.vy === 0 && now - this.lastInput > 300) {
+          // Fixed Restart Logic: the 500ms triggerDeath timeout natively prevents instant resetting 
+          // allowing this clean reset condition to work properly.
+          if (this.bird.vy === 0) {
             this.reset();
           }
           break;
