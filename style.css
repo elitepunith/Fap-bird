@@ -1,17 +1,15 @@
 /*
-  fap-bird — style.css
+  style.css - Fap-Bird
 
-  The approach here is simple but effective:
-  the canvas always renders at its native 276×414 resolution internally,
-  so sprite coordinates never change. CSS transform: scale() blows it
-  up to fill whatever screen the player is on.
+  The canvas is always 320x568 internally (a common phone resolution
+  that makes the sprites feel right-sized). CSS transform scales it up
+  to whatever screen the player is on. This way the game logic never
+  has to care about screen size at all.
 
-  This gives us pixel-perfect sprites on any display size — phone,
-  tablet, 4K monitor — without a single line of resize code touching
-  the game logic.
+  The will-change: transform line is important - it tells the browser
+  to put the canvas on its own GPU layer, which kills the jank.
 */
 
-/* reset everything — browsers add annoying default margins */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -22,11 +20,7 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-
-  /* the sky colour — matches the canvas bg so no flash on load */
   background: #4ec0ca;
-
-  /* stop the page from scrolling when you swipe to flap on mobile */
   touch-action: none;
   overscroll-behavior: none;
 }
@@ -43,46 +37,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-
-  /* needed so the scaled canvas doesn't overflow and cause scrollbars */
   overflow: hidden;
 }
 
 #canvas {
   display: block;
-
-  /*
-    Pixel art needs this — without it the browser blurs the sprites
-    when scaling, and it looks terrible
-  */
   image-rendering: pixelated;
-  image-rendering: crisp-edges; /* Firefox */
-
+  image-rendering: crisp-edges;
   cursor: pointer;
-
-  /*
-    Moves canvas to its own compositing layer on the GPU.
-    This is the main reason lag goes away — the browser stops
-    re-painting everything else when the canvas updates.
-  */
   will-change: transform;
   transform-origin: center center;
-
-  /* no blue tap flash on iOS */
   -webkit-tap-highlight-color: transparent;
   outline: none;
-}
-
-/* a tiny version watermark — feels human, like a dev stuck it there */
-body::after {
-  content: 'v2.0';
-  position: fixed;
-  bottom: 10px;
-  right: 12px;
-  font-family: 'Press Start 2P', monospace;
-  font-size: 8px;
-  color: rgba(0, 0, 0, 0.18);
-  pointer-events: none;
-  user-select: none;
-  letter-spacing: 1px;
 }

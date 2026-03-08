@@ -2,42 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-
-  <!-- prevents mobile from zooming or scrolling — critical for a game -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0,
         maximum-scale=1.0, user-scalable=no" />
-
-  <!-- iOS fullscreen stuff -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-  <!-- matches the sky colour so there's no flash while loading -->
   <meta name="theme-color" content="#4ec0ca" />
-
-  <title>Fap-Bird 🐦</title>
-
-  <!--
-    Press Start 2P is the perfect font for this — pixel-art style,
-    matches the sprite aesthetic way better than Squada One
-  -->
+  <title>Fap-Bird</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
-        rel="stylesheet" />
-
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
-  <!--
-    The canvas lives inside a wrapper div.
-    The wrapper fills the viewport; the canvas gets CSS-scaled inside it.
-    This way the game logic always works at 276×414 (matching sprites)
-    but looks fullscreen on any display.
-  -->
   <div id="game-container">
     <canvas id="canvas"></canvas>
   </div>
-
   <script src="game.js"></script>
 </body>
 </html>

@@ -1,236 +1,206 @@
 /*
-  fap-bird — game.js
-  ==================
+  game.js - Fap-Bird
+  ------------------
 
-  A Flappy Bird clone using the original pixel-art sprites.
+  Physics tuned to match the original Flappy Bird as closely as possible.
+  The original ran at 60fps and felt "heavy" - the bird falls fast but
+  the flap gives you a real boost. Gap is generous at 120px so beginners
+  have a chance. Speed starts at 2px/frame and only creeps up every 10 points.
 
-  Architecture overview:
-  - Canvas stays at 276×414 (native sprite resolution) internally
-  - CSS transform scales it fullscreen — no game logic changes needed
-  - requestAnimationFrame for smooth 60fps (no more setInterval drift)
-  - Background + ground are pre-rendered to offscreen canvases once on boot
-    → this kills the lag (no gradient math every frame)
-  - Bird drawn with canvas API — 4 frame wing flap animation
-  - Screen shake + particles for game feel
+  Bird is drawn using the flappy.png sprite (1024x522, RGBA).
+  It gets scaled down to ~34px tall in-game and rotated with the velocity
+  just like the original did.
 
-  Asset paths: assets/images/ and assets/sfx/
-  (matching the repo's assets/ folder structure)
+  Everything else (BG, ground, pipes, UI) uses the original sprite assets.
+  Background and ground are pre-rendered to offscreen canvases at startup
+  so we're not running gradient code every single frame.
 */
 
 'use strict';
 
-// ─── CANVAS SETUP ─────────────────────────────────────────────────────────────
-
-// The game always thinks it's 276×414 — the CSS scale handles the rest
-const GAME_W = 276;
-const GAME_H = 414;
+// the game always thinks it's 320x568 internally
+// that's roughly an iPhone 5 portrait screen, which is a nice size for this game
+const GAME_W = 320;
+const GAME_H = 568;
 
 const canvas = document.getElementById('canvas');
-const ctx    = canvas.getContext('2d');
+const ctx = canvas.getContext('2d');
 
-canvas.width  = GAME_W;
+canvas.width = GAME_W;
 canvas.height = GAME_H;
 
-// Work out what CSS scale fills the screen while keeping the aspect ratio.
-// Called once on load and again whenever the window resizes.
-function fitToScreen() {
-  const scaleX = window.innerWidth  / GAME_W;
+// scale the canvas to fill the screen while keeping the aspect ratio
+// runs once on load and again on every resize
+function fitCanvas() {
+  const scaleX = window.innerWidth / GAME_W;
   const scaleY = window.innerHeight / GAME_H;
-  const scale  = Math.min(scaleX, scaleY); // never clip — letterbox if needed
+  const scale = Math.min(scaleX, scaleY);
   canvas.style.transform = `scale(${scale})`;
 }
 
-window.addEventListener('resize', fitToScreen);
-fitToScreen();
+window.addEventListener('resize', fitCanvas);
+fitCanvas();
 
 
-// ─── ASSET PATHS ──────────────────────────────────────────────────────────────
-// All in assets/ so they match the GitHub repo folder layout
+// ---------------------------------------------------------------------------
+// asset loading
+// ---------------------------------------------------------------------------
 
-const ASSET = {
-  images: {
-    bg      : 'assets/images/BG.png',
-    ground  : 'assets/images/ground.png',
-    toppipe : 'assets/images/toppipe.png',
-    botpipe : 'assets/images/botpipe.png',
-    getReady: 'assets/images/getready.png',
-    gameOver: 'assets/images/go.png',
-  },
-  sfx: {
-    start : 'assets/sfx/start.wav',
-    flap  : 'assets/sfx/flap.wav',
-    score : 'assets/sfx/score.wav',
-    hit   : 'assets/sfx/hit.wav',
-    die   : 'assets/sfx/die.wav',
-  },
-};
-
-
-// ─── IMAGE + SOUND LOADERS ────────────────────────────────────────────────────
-
-// Simple image loader — marks the image as loaded/missing so we can
-// fall back gracefully without throwing errors
-function loadImg(src) {
-  const img    = new Image();
-  img.ready    = false;  // true once loaded (or failed)
-  img.missing  = false;
-  img.onload   = () => { img.ready = true; };
-  img.onerror  = () => { img.ready = true; img.missing = true; console.warn('Missing:', src); };
-  img.src      = src;
+// simple image loader - marks the image as ready/missing so we can
+// fall back gracefully if something doesn't load
+function loadImage(src) {
+  const img = new Image();
+  img.ready = false;
+  img.missing = false;
+  img.onload = () => { img.ready = true; };
+  img.onerror = () => {
+    img.ready = true;
+    img.missing = true;
+    console.warn('could not load:', src);
+  };
+  img.src = src;
   return img;
 }
 
-// Sound loader — uses the clone trick so the same sound can play
-// multiple times overlapping (important for rapid flapping)
+// audio loader - clone trick lets the same sound play overlapping
+// (you can flap fast and hear every flap)
 function loadSound(src) {
-  const audio  = new Audio(src);
-  audio.preload = 'auto';
+  const a = new Audio(src);
+  a.preload = 'auto';
   return {
-    play(vol = 0.6) {
+    play(volume = 0.6) {
       try {
-        const clone = audio.cloneNode();
-        clone.volume = vol;
-        // modern browsers require a user gesture first — catch silently
-        clone.play().catch(() => {});
+        const clone = a.cloneNode();
+        clone.volume = volume;
+        clone.play().catch(() => {
+          // browsers block audio until the user has interacted with the page
+          // this is expected on first load, just ignore it
+        });
       } catch (_) {}
     }
   };
 }
 
-// Load everything up
 const sprites = {
-  bg      : loadImg(ASSET.images.bg),
-  ground  : loadImg(ASSET.images.ground),
-  toppipe : loadImg(ASSET.images.toppipe),
-  botpipe : loadImg(ASSET.images.botpipe),
-  getReady: loadImg(ASSET.images.getReady),
-  gameOver: loadImg(ASSET.images.gameOver),
+  bg:       loadImage('assets/images/BG.png'),
+  ground:   loadImage('assets/images/ground.png'),
+  toppipe:  loadImage('assets/images/toppipe.png'),
+  botpipe:  loadImage('assets/images/botpipe.png'),
+  getReady: loadImage('assets/images/getready.png'),
+  gameOver: loadImage('assets/images/go.png'),
+  bird:     loadImage('assets/images/flappy.png'), // the pixel art bird
 };
 
 const sfx = {
-  start : loadSound(ASSET.sfx.start),
-  flap  : loadSound(ASSET.sfx.flap),
-  score : loadSound(ASSET.sfx.score),
-  hit   : loadSound(ASSET.sfx.hit),
-  die   : loadSound(ASSET.sfx.die),
+  start: loadSound('assets/sfx/start.wav'),
+  flap:  loadSound('assets/sfx/flap.wav'),
+  score: loadSound('assets/sfx/score.wav'),
+  hit:   loadSound('assets/sfx/hit.wav'),
+  die:   loadSound('assets/sfx/die.wav'),
 };
 
 
-// ─── OFFSCREEN CACHES ─────────────────────────────────────────────────────────
-//
-// This is the main performance fix vs the original.
-// Instead of drawing the background each frame (which means iterating
-// gradients, arcs, etc. 60 times per second), we draw it ONCE to an
-// offscreen canvas when the assets load, then just blit that every frame.
-//
-// Same for the ground strip — pre-render it once, scroll by adjusting
-// the draw X position.
+// ---------------------------------------------------------------------------
+// offscreen canvas caches
+// ---------------------------------------------------------------------------
+// we draw the background and ground once at startup onto offscreen canvases,
+// then just blit those cached images every frame instead of recalculating
+// gradients 60 times per second. this is the main lag fix.
 
-const bgOffscreen     = document.createElement('canvas');
-const groundOffscreen = document.createElement('canvas');
+const bgCache = document.createElement('canvas');
+bgCache.width = GAME_W;
+bgCache.height = GAME_H;
 
-bgOffscreen.width     = GAME_W;
-bgOffscreen.height    = GAME_H;
-groundOffscreen.width = GAME_W * 3;  // 3× wide so there's never a gap while scrolling
-groundOffscreen.height = 112;        // matches ground.png height
+// ground strip is 3x wide so we can always scroll without showing a gap
+const groundCache = document.createElement('canvas');
+groundCache.width = GAME_W * 4;
+groundCache.height = 112;
 
-let cachesBuilt = false;
+let cachesReady = false;
 
-function buildOffscreenCaches() {
-  // ── background ──────────────────────────────────────────────────────────────
-  //
-  // BG.png is 276×228 — not tall enough on its own for a 414px canvas.
-  // Draw it anchored to the bottom (just above the ground), then fill the
-  // sky above it with a gradient that matches the sprite's top edge colour.
+function buildCaches() {
+  const bgCtx = bgCache.getContext('2d');
 
-  const bgCtx  = bgOffscreen.getContext('2d');
-  const bgImg  = sprites.bg;
-  const BG_H   = bgImg.missing ? 228 : bgImg.naturalHeight || 228;
-  const bgY    = GAME_H - 112 - BG_H;  // sit BG right above the ground
+  // BG.png is 276x228, which doesn't fill our 320x568 canvas
+  // draw it scaled to full width, anchored above the ground
+  // and fill above it with a solid sky colour
+  const bgH = 228;
+  const bgScaled = (GAME_W / 276) * bgH; // scale height proportionally
+  const bgY = GAME_H - 112 - bgScaled;
 
-  // sky gradient — sampled from the sprite's top edge (#4ec0ca ish)
-  const skyGrad = bgCtx.createLinearGradient(0, 0, 0, bgY + 20);
-  skyGrad.addColorStop(0,   '#3ab4cc');
-  skyGrad.addColorStop(0.6, '#4ec0ca');
-  skyGrad.addColorStop(1,   '#5dcfd8');
-  bgCtx.fillStyle = skyGrad;
-  bgCtx.fillRect(0, 0, GAME_W, bgY + 20);
+  // fill the sky above the background sprite
+  bgCtx.fillStyle = '#4ec0ca';
+  bgCtx.fillRect(0, 0, GAME_W, bgY + 5);
 
-  // draw the actual BG sprite
-  if (!bgImg.missing) {
-    bgCtx.drawImage(bgImg, 0, bgY, GAME_W, BG_H);
+  if (!sprites.bg.missing) {
+    bgCtx.drawImage(sprites.bg, 0, bgY, GAME_W, bgScaled);
   }
 
-  // ── ground ──────────────────────────────────────────────────────────────────
-  //
-  // ground.png is 552×112 — exactly 2× the canvas width.
-  // Tile it 3× across the offscreen canvas so we can always shift by
-  // one full width and never show a gap.
-
-  const gCtx  = groundOffscreen.getContext('2d');
-  const gImg  = sprites.ground;
-  const GW    = gImg.missing ? 552 : gImg.naturalWidth  || 552;
-  const GH    = gImg.missing ? 112 : gImg.naturalHeight || 112;
-
-  if (!gImg.missing) {
-    // tile it 3 times across
-    for (let i = 0; i < 3; i++) {
-      gCtx.drawImage(gImg, i * GW, 0);
+  // ground - tile the 552px wide sprite across our wider cache
+  const gCtx = groundCache.getContext('2d');
+  if (!sprites.ground.missing) {
+    const gW = sprites.ground.naturalWidth || 552;
+    const gH = sprites.ground.naturalHeight || 112;
+    for (let i = 0; i < 5; i++) {
+      gCtx.drawImage(sprites.ground, i * gW, 0);
     }
   } else {
-    // fallback ground if sprite didn't load
-    const dirtGrad = gCtx.createLinearGradient(0, 0, 0, GH);
-    dirtGrad.addColorStop(0,   '#c8a060');
-    dirtGrad.addColorStop(0.2, '#b08040');
-    dirtGrad.addColorStop(1,   '#8a6030');
-    gCtx.fillStyle = dirtGrad;
-    gCtx.fillRect(0, 0, GAME_W * 3, GH);
+    // fallback if the ground image didn't load
+    gCtx.fillStyle = '#c8a060';
+    gCtx.fillRect(0, 0, groundCache.width, 112);
     gCtx.fillStyle = '#5aad3a';
-    gCtx.fillRect(0, 0, GAME_W * 3, 18);
-    gCtx.fillStyle = '#72cc50';
-    gCtx.fillRect(0, 0, GAME_W * 3, 6);
+    gCtx.fillRect(0, 0, groundCache.width, 18);
   }
 
-  cachesBuilt = true;
+  cachesReady = true;
 }
 
+// build caches once the sprites have had a moment to load
+// if they're already cached by the browser, 50ms is plenty
+setTimeout(buildCaches, 80);
 
-// ─── GAME STATE ───────────────────────────────────────────────────────────────
+
+// ---------------------------------------------------------------------------
+// game state
+// ---------------------------------------------------------------------------
 
 const STATE = {
-  READY : 0,  // waiting for first tap — bird bobs, no pipes
-  PLAY  : 1,  // actively playing
-  DEAD  : 2,  // game over — bird fell, showing score screen
+  READY: 0,   // title screen, bird is idle, no pipes
+  PLAY: 1,    // actively playing
+  DEAD: 2,    // game over
 };
 
-let state      = STATE.READY;
-let frameCount = 0;       // increments every game tick
-let score      = 0;
-let bestScore  = 0;
-let scrollSpeed = 2.2;    // pixels per frame — increases with score
-let deathSfxPlayed = false;
+let state = STATE.READY;
+let frameCount = 0;
+let score = 0;
+let bestScore = 0;
+let scrollSpeed = 2.0;   // pipes start at 2px/frame, same as original
+let deathSoundPlayed = false;
 
 
-// ─── SCREEN SHAKE ─────────────────────────────────────────────────────────────
-// Just offsetting the canvas context translation a tiny bit each frame.
-// Simple but really sells the collision impact.
+// ---------------------------------------------------------------------------
+// screen shake
+// ---------------------------------------------------------------------------
+// translates the canvas context by a small random offset each frame
+// damped so it fades out quickly. small effect, big impact on feel.
 
 const shake = {
-  x: 0, y: 0,
-  intensity: 0,
-  framesLeft: 0,
+  x: 0,
+  y: 0,
+  power: 0,
+  frames: 0,
 
-  trigger(intensity, duration) {
-    this.intensity  = intensity;
-    this.framesLeft = duration;
+  trigger(power, duration) {
+    this.power = power;
+    this.frames = duration;
   },
 
   update() {
-    if (this.framesLeft > 0) {
-      this.x          = (Math.random() - 0.5) * this.intensity;
-      this.y          = (Math.random() - 0.5) * this.intensity;
-      this.intensity *= 0.85;   // dampen each frame
-      this.framesLeft -= 1;
+    if (this.frames > 0) {
+      this.x = (Math.random() - 0.5) * this.power;
+      this.y = (Math.random() - 0.5) * this.power;
+      this.power *= 0.83;
+      this.frames -= 1;
     } else {
       this.x = 0;
       this.y = 0;
@@ -239,48 +209,47 @@ const shake = {
 };
 
 
-// ─── PARTICLE SYSTEM ──────────────────────────────────────────────────────────
-// Used for:
-//  - small feather puffs when the bird flaps
-//  - a burst explosion when the bird hits something
-//  - little golden pop when passing a pipe
+// ---------------------------------------------------------------------------
+// particles
+// ---------------------------------------------------------------------------
+// small coloured circles that burst out on death and pop on scoring.
+// kept simple - just position, velocity, and a life value that fades to 0.
 
 const particles = {
-  pool: [],
+  list: [],
 
   spawn(x, y, count, colours) {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 0.7 + Math.random() * 3.2;
-      this.pool.push({
+      const speed = 0.8 + Math.random() * 3.5;
+      this.list.push({
         x, y,
-        vx   : Math.cos(angle) * speed,
-        vy   : Math.sin(angle) * speed - 1.4,  // slight upward bias feels better
-        life : 1.0,
-        decay: 0.04 + Math.random() * 0.045,
-        size : 1.8 + Math.random() * 3.2,
-        color: colours[Math.floor(Math.random() * colours.length)],
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.5,
+        life: 1.0,
+        decay: 0.035 + Math.random() * 0.04,
+        size: 2 + Math.random() * 3.5,
+        colour: colours[Math.floor(Math.random() * colours.length)],
       });
     }
   },
 
   update() {
-    // filter in-place — remove dead particles
-    this.pool = this.pool.filter(p => {
-      p.x    += p.vx;
-      p.y    += p.vy;
-      p.vy   += 0.17;   // gravity
-      p.vx   *= 0.97;   // air resistance
+    this.list = this.list.filter(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.18;  // gravity pulls particles down
+      p.vx *= 0.97;  // a little air resistance
       p.life -= p.decay;
       return p.life > 0;
     });
   },
 
   draw() {
-    this.pool.forEach(p => {
+    this.list.forEach(p => {
       ctx.save();
       ctx.globalAlpha = p.life;
-      ctx.fillStyle   = p.color;
+      ctx.fillStyle = p.colour;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
       ctx.fill();
@@ -290,14 +259,16 @@ const particles = {
 };
 
 
-// ─── BACKGROUND ───────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// background
+// ---------------------------------------------------------------------------
 
 const background = {
   draw() {
-    if (cachesBuilt) {
-      ctx.drawImage(bgOffscreen, 0, 0);
+    if (cachesReady) {
+      ctx.drawImage(bgCache, 0, 0);
     } else {
-      // fallback while caches are being built (first frame or two)
+      // just fill sky while loading, takes maybe one frame
       ctx.fillStyle = '#4ec0ca';
       ctx.fillRect(0, 0, GAME_W, GAME_H);
     }
@@ -305,68 +276,74 @@ const background = {
 };
 
 
-// ─── GROUND ───────────────────────────────────────────────────────────────────
-// Scrolls left continuously using the pre-rendered offscreen ground strip.
+// ---------------------------------------------------------------------------
+// ground
+// ---------------------------------------------------------------------------
 
 const ground = {
-  x      : 0,      // current scroll offset
-  y      : GAME_H - 112,  // 302px from top — right at the bottom
-  height : 112,
-  GW     : 552,    // ground sprite width (updated when sprite loads)
+  scrollX: 0,
+  y: GAME_H - 112,
+  height: 112,
+  spriteWidth: 552,
 
   update() {
     if (state !== STATE.PLAY) return;
-    this.x -= scrollSpeed;
-    // reset when we've scrolled exactly one sprite width
-    if (this.x <= -this.GW) this.x = 0;
+    this.scrollX += scrollSpeed;
+    // loop back when we've scrolled one full sprite width
+    if (this.scrollX >= this.spriteWidth) {
+      this.scrollX = 0;
+    }
   },
 
   draw() {
-    if (cachesBuilt) {
-      // draw from the pre-rendered 3× wide strip at offset x
-      ctx.drawImage(
-        groundOffscreen,
-        -this.x, 0,     // source x/y
-        GAME_W, this.height,   // source w/h
-        0, this.y,      // dest x/y
-        GAME_W, this.height    // dest w/h
-      );
-    } else {
-      // dark green placeholder
-      ctx.fillStyle = '#5aad3a';
-      ctx.fillRect(0, this.y, GAME_W, this.height);
-    }
+    if (!cachesReady) return;
+    ctx.drawImage(
+      groundCache,
+      this.scrollX, 0,
+      GAME_W, this.height,
+      0, this.y,
+      GAME_W, this.height
+    );
   },
 };
 
 
-// ─── PIPES ────────────────────────────────────────────────────────────────────
-// Uses toppipe.png (52×400) and botpipe.png (52×400).
-// The gap between them is fixed at 85px — same as original.
+// ---------------------------------------------------------------------------
+// pipes
+// ---------------------------------------------------------------------------
+//
+// physics tuning vs original:
+//   gap:      120px  (original was around 100-110, this is a tiny bit more forgiving)
+//   speed:    starts at 2.0, max 3.6  (original was around 2-3px/frame)
+//   interval: 90 frames  (roughly 1.5 seconds at 60fps, same as original)
+//
+// the original game had no difficulty scaling at all for the first ~10 pipes.
+// i'm adding very gentle scaling (every 10 points) so it doesn't stay
+// trivially easy forever.
 
 const pipes = {
-  list    : [],
-  gap     : 85,    // vertical gap between top and bottom pipe
-  PW      : 52,    // pipe width — matches sprite
-  PH      : 400,   // pipe height — matches sprite
-  timer   : 0,
-  interval: 100,   // frames between pipe spawns
+  list: [],
+  gap: 120,        // vertical gap between top and bottom pipe - 120 feels like the original
+  pipeWidth: 52,   // matches the sprite width
+  pipeHeight: 400, // matches the sprite height
+  timer: 0,
+  spawnInterval: 90,  // frames between new pipes - 90 frames = ~1.5 seconds at 60fps
 
   reset() {
-    this.list     = [];
-    this.timer    = 0;
-    this.interval = 100;
-    scrollSpeed   = 2.2;
+    this.list = [];
+    this.timer = 0;
+    this.spawnInterval = 90;
+    scrollSpeed = 2.0;
   },
 
   spawnPipe() {
-    // y is negative — top pipe hangs from off-screen ceiling
-    // same formula the original used, just slightly cleaned up
+    // same randomisation formula as the original
+    // y is negative so the top pipe comes from off the top of the screen
     const y = -210 * Math.min(Math.random() + 1, 1.8);
     this.list.push({
-      x      : GAME_W + this.PW + 5,
+      x: GAME_W + this.pipeWidth + 4,
       y,
-      scored : false,  // track if we've given a point for this pipe
+      counted: false,  // whether we've already awarded a point for this pipe
     });
   },
 
@@ -374,15 +351,15 @@ const pipes = {
     if (state !== STATE.PLAY) return;
 
     this.timer++;
-    if (this.timer >= this.interval) {
+    if (this.timer >= this.spawnInterval) {
       this.spawnPipe();
       this.timer = 0;
     }
 
     this.list.forEach(p => { p.x -= scrollSpeed; });
 
-    // remove pipes that have fully scrolled off screen
-    this.list = this.list.filter(p => p.x > -(this.PW + 10));
+    // remove pipes that have fully scrolled past the left edge
+    this.list = this.list.filter(p => p.x > -(this.pipeWidth + 20));
   },
 
   draw() {
@@ -390,73 +367,67 @@ const pipes = {
     const botOk = sprites.botpipe.ready && !sprites.botpipe.missing;
 
     this.list.forEach(p => {
-      const topPipeBottom = p.y + this.PH;           // bottom edge of top pipe
-      const botPipeTop    = topPipeBottom + this.gap; // top edge of bottom pipe
+      const topBottom = p.y + this.pipeHeight;      // bottom edge of top pipe
+      const botTop = topBottom + this.gap;           // top edge of bottom pipe
 
       if (topOk && botOk) {
         ctx.drawImage(sprites.toppipe, p.x, p.y);
-        ctx.drawImage(sprites.botpipe, p.x, botPipeTop);
+        ctx.drawImage(sprites.botpipe, p.x, botTop);
       } else {
-        // canvas fallback pipe (shouldn't happen, but just in case)
-        this.drawFallbackPipe(p.x, topPipeBottom, botPipeTop);
+        this.drawFallback(p.x, topBottom, botTop);
       }
     });
   },
 
-  // fallback pipe drawn with canvas gradients — not needed if sprites load fine
-  drawFallbackPipe(x, topH, botY) {
-    const w  = this.PW;
-    const cX = x - 3;
-    const cW = w + 6;
-
+  // drawn pipe as fallback if the sprite files don't load
+  drawFallback(x, topH, botY) {
+    const w = this.pipeWidth;
     const grad = ctx.createLinearGradient(x, 0, x + w, 0);
-    grad.addColorStop(0,   '#1a6b1a');
+    grad.addColorStop(0, '#1a6b1a');
     grad.addColorStop(0.3, '#45d445');
     grad.addColorStop(0.7, '#2eaa2e');
-    grad.addColorStop(1,   '#1a6b1a');
+    grad.addColorStop(1, '#1a6b1a');
 
     ctx.fillStyle = grad;
-    ctx.fillRect(x, 0,     w, topH - 16);
+    ctx.fillRect(x, 0, w, topH - 16);
     ctx.fillStyle = '#2ecc2e';
-    ctx.fillRect(cX, topH - 16, cW, 16);
+    ctx.fillRect(x - 3, topH - 16, w + 6, 16);
     ctx.fillStyle = '#2ecc2e';
-    ctx.fillRect(cX, botY, cW, 16);
+    ctx.fillRect(x - 3, botY, w + 6, 16);
     ctx.fillStyle = grad;
     ctx.fillRect(x, botY + 16, w, ground.y - botY - 16);
   },
 
-  // Returns true if the bird is colliding with any pipe.
-  // Uses a slightly shrunk hitbox (80%) — the original was very tight
-  // and people complained it felt unfair.
+  // returns true if the bird at (bx, by) with radius br is touching a pipe
+  // hitbox is 78% of the visual size - a little forgiveness goes a long way
   checkCollision(bx, by, br) {
-    const r = br * 0.8;
+    const r = br * 0.78;
 
     for (let i = 0; i < this.list.length; i++) {
-      const p    = this.list[i];
-      const roof = p.y + this.PH;         // bottom of top pipe
-      const floor= roof + this.gap;       // top of bottom pipe
+      const p = this.list[i];
+      const roof = p.y + this.pipeHeight;   // bottom of top pipe
+      const floor = roof + this.gap;        // top of bottom pipe
+      const left = p.x;
+      const right = p.x + this.pipeWidth;
 
-      const hitHorizontally = bx + r > p.x && bx - r < p.x + this.PW;
+      const inXZone = bx + r > left && bx - r < right;
 
-      if (hitHorizontally) {
-        if (by - r < roof || by + r > floor) {
-          return true; // ouch
-        }
+      if (inXZone && (by - r < roof || by + r > floor)) {
+        return true;
       }
 
-      // award a point when the bird clears the pipe
-      if (!p.scored && bx - r > p.x + this.PW) {
-        p.scored = true;
+      // award a point when the bird's left edge clears the pipe's right edge
+      if (!p.counted && bx - r > right) {
+        p.counted = true;
         score++;
         sfx.score.play();
+        particles.spawn(bx + 18, by - br, 7, ['#FFD700', '#FFFFFF', '#FFA500', '#FFE066']);
 
-        // golden pop particles
-        particles.spawn(bx + 20, by - br, 8, ['#FFD700', '#FFFFFF', '#FFA500']);
-
-        // gradually speed things up every 5 points
-        if (score % 5 === 0) {
-          scrollSpeed = Math.min(scrollSpeed + 0.22, 4.8);
-          this.interval = Math.max(this.interval - 3, 72);
+        // very gentle speed increase every 10 points
+        // the original had no scaling, but zero scaling gets boring fast
+        if (score % 10 === 0) {
+          scrollSpeed = Math.min(scrollSpeed + 0.18, 3.6);
+          this.spawnInterval = Math.max(this.spawnInterval - 2, 78);
         }
       }
     }
@@ -466,83 +437,94 @@ const pipes = {
 };
 
 
-// ─── BIRD ─────────────────────────────────────────────────────────────────────
-// Drawn entirely with canvas — no bird sprite sheets needed.
-// The original game had separate b0/b1/b2 PNG files; here we replicate
-// the yellow flappy bird look with just canvas paths.
+// ---------------------------------------------------------------------------
+// bird
+// ---------------------------------------------------------------------------
 //
-// Physics constants are kept identical to the original so it "feels" right.
+// uses flappy.png as the sprite. the image is 1024x522 which is wide,
+// so we draw it scaled to about 34px tall and a proportional width.
+// rotation is applied with ctx.rotate(), same as the original's approach.
+//
+// physics values tuned to feel like the original:
+//   gravity: 0.28 per frame  (heavier than my last version, more original-feeling)
+//   thrust: -7.2             (strong upward kick on flap)
+//   max fall speed: capped at 10px/frame so it doesn't feel instant
+//
+// the original had these rough values (at 60fps):
+//   gravity: ~0.25-0.30
+//   flap velocity: -8 to -9
+//   terminal velocity: ~10-12
 
 const bird = {
-  x       : 60,
-  y       : 150,
-  vy      : 0,       // vertical velocity (pixels per frame)
-  rotation: 0,       // degrees — positive = nose down
-  frame   : 0,       // 0-3 animation cycle
-  wingAng : 0,       // wing flap angle (radians)
-  wingDir : 1,       // +1 or -1 — controls flap direction
-  alive   : true,
-  r       : 12,      // collision + drawing radius
+  x: 72,
+  y: 250,
+  vy: 0,        // vertical velocity in pixels per frame
+  rotation: 0,  // current rotation in degrees (positive = nose down)
+  alive: true,
 
-  // exact physics from the original
-  gravity : 0.125,
-  thrust  : 3.6,
+  // display size - the sprite will be drawn at this height, width is proportional
+  drawHeight: 34,
+  drawWidth: 0,   // calculated from sprite aspect ratio on first draw
+
+  // collision radius - smaller than the visual size
+  // the original game also used a smaller hitbox than the sprite
+  r: 12,
+
+  // physics - tuned to match original Flappy Bird feel
+  gravity: 0.28,
+  thrust: 7.2,
+  maxFallSpeed: 10,
 
   reset() {
-    this.x        = 60;
-    this.y        = 150;
-    this.vy       = 0;
+    this.x = 72;
+    this.y = 250;
+    this.vy = 0;
     this.rotation = 0;
-    this.frame    = 0;
-    this.alive    = true;
+    this.alive = true;
   },
 
   flap() {
     if (!this.alive) return;
-    if (this.y <= this.r) return;  // already at ceiling
+    if (this.y - this.r < 0) return;
 
-    sfx.flap.play(0.5);
+    sfx.flap.play(0.55);
     this.vy = -this.thrust;
 
-    // little feather puff behind the bird on flap
-    particles.spawn(
-      this.x - this.r, this.y + 4, 5,
-      ['#ffffff', '#ffe066', '#ffd000']
-    );
+    // small white puff behind the bird on flap - gives it some weight
+    particles.spawn(this.x - this.r - 4, this.y + 2, 4, ['#ffffff', '#e8f8e8']);
   },
 
-  // same rotation formula as original — nose down when falling, nose up when rising
+  // rotation logic from the original:
+  // when moving up -> tilt nose up (negative degrees)
+  // when falling -> tilt nose down (positive degrees, max 90)
   updateRotation() {
-    if (this.vy <= 0) {
-      this.rotation = Math.max(-25, (-25 * this.vy) / (-1 * this.thrust));
+    if (this.vy < 0) {
+      // going up - tilt up proportionally to how hard we're flapping
+      this.rotation = Math.max(-30, (-30 * this.vy) / (-this.thrust));
     } else {
-      this.rotation = Math.min(90,  (90  * this.vy) / (this.thrust * 2));
+      // falling - tilt down, reaches 90 degrees at max fall speed
+      this.rotation = Math.min(90, (90 * this.vy) / this.maxFallSpeed);
     }
   },
 
   update() {
-    // wing flap animation — runs at all times (even on menu screen)
-    this.wingAng += 0.2 * this.wingDir;
-    if (Math.abs(this.wingAng) > 0.55) this.wingDir *= -1;
-    if (frameCount % 5 === 0) this.frame = (this.frame + 1) % 4;
-
     switch (state) {
       case STATE.READY:
-        // idle bob while waiting
+        // bob up and down gently while waiting on the title screen
         this.rotation = 0;
-        if (frameCount % 10 === 0) {
-          this.y += Math.sin(frameCount * (Math.PI / 180));
+        if (frameCount % 8 === 0) {
+          this.y += Math.sin(frameCount * 0.08) * 0.9;
         }
         break;
 
       case STATE.PLAY:
-        this.vy += this.gravity;
-        this.y  += this.vy;
+        this.vy = Math.min(this.vy + this.gravity, this.maxFallSpeed);
+        this.y += this.vy;
         this.updateRotation();
 
         // hit the ceiling
-        if (this.y - this.r < 0) {
-          this.y  = this.r;
+        if (this.y - this.r <= 0) {
+          this.y = this.r;
           this.vy = 0;
         }
 
@@ -560,20 +542,19 @@ const bird = {
         break;
 
       case STATE.DEAD:
-        // keep falling until we land
+        // keep falling until landing on the ground
         if (this.y + this.r < ground.y) {
-          this.vy += this.gravity * 2.2;
-          this.y  += this.vy;
+          this.vy = Math.min(this.vy + this.gravity * 2.2, 14);
+          this.y += this.vy;
           this.rotation = 90;
         } else {
-          this.vy       = 0;
-          this.y        = ground.y - this.r;
+          this.vy = 0;
+          this.y = ground.y - this.r;
           this.rotation = 90;
 
-          // play the die sound once, only after landing
-          if (!deathSfxPlayed) {
-            sfx.die.play(0.6);
-            deathSfxPlayed = true;
+          if (!deathSoundPlayed) {
+            sfx.die.play(0.65);
+            deathSoundPlayed = true;
           }
         }
         break;
@@ -581,296 +562,245 @@ const bird = {
   },
 
   die() {
-    if (!this.alive) return;  // prevent double-triggering
+    if (!this.alive) return;
     this.alive = false;
 
     sfx.hit.play(0.7);
-    shake.trigger(7, 16);
+    shake.trigger(8, 18);
 
-    // big death explosion
-    particles.spawn(this.x, this.y, 20, [
-      '#FF5555', '#FF9900', '#FFE066', '#ffffff', '#88ff66', '#ff88aa'
+    particles.spawn(this.x, this.y, 22, [
+      '#FF5555', '#FF8800', '#FFD700', '#ffffff', '#FF3333', '#FFAA00'
     ]);
 
-    // switch to DEAD state after a short delay so the fall animation plays first
+    // delay the game over screen so the death fall animation plays out
     setTimeout(() => {
       state = STATE.DEAD;
-      saveBestScore();
-    }, 450);
+      saveBest();
+    }, 500);
   },
 
   draw() {
+    const sp = sprites.bird;
+
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rotation * (Math.PI / 180));
 
-    const r = this.r;
-
-    // ── drop shadow ──────────────────────────────────────────────────────────
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
-    ctx.beginPath();
-    ctx.ellipse(3, r * 0.85, r * 0.8, r * 0.2, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // ── wing (behind body) ───────────────────────────────────────────────────
-    ctx.save();
-    ctx.rotate(this.wingAng);
-    ctx.fillStyle = '#C87200';
-    ctx.beginPath();
-    ctx.ellipse(-r * 0.2, r * 0.06, r * 0.62, r * 0.27, -0.38, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // ── body ─────────────────────────────────────────────────────────────────
-    // radial gradient gives it a nice round, slightly lit look
-    const bodyGrad = ctx.createRadialGradient(-r * 0.22, -r * 0.3, r * 0.08, 0, 0, r);
-    bodyGrad.addColorStop(0,    '#FFE566');
-    bodyGrad.addColorStop(0.5,  '#FFC800');
-    bodyGrad.addColorStop(1,    '#C87A00');
-    ctx.fillStyle = bodyGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── belly highlight ───────────────────────────────────────────────────────
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.beginPath();
-    ctx.ellipse(r * 0.1, r * 0.28, r * 0.46, r * 0.32, 0.18, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── eye white ─────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(r * 0.3, -r * 0.2, r * 0.34, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── pupil ─────────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#1a1025';
-    ctx.beginPath();
-    ctx.arc(r * 0.39, -r * 0.15, r * 0.17, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── eye shine ────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(r * 0.46, -r * 0.23, r * 0.065, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── beak ─────────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#FF8C00';
-    ctx.beginPath();
-    ctx.moveTo(r * 0.56,  -r * 0.1);
-    ctx.lineTo(r * 1.16,   r * 0.04);
-    ctx.lineTo(r * 0.56,   r * 0.22);
-    ctx.closePath();
-    ctx.fill();
-
-    // beak divider line
-    ctx.strokeStyle = '#C05500';
-    ctx.lineWidth   = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(r * 0.58, r * 0.06);
-    ctx.lineTo(r * 1.06, r * 0.06);
-    ctx.stroke();
-
-    ctx.restore();
-  },
-};
-
-
-// ─── HUD ──────────────────────────────────────────────────────────────────────
-// Score display during gameplay and on the game-over screen.
-// Uses Press Start 2P font — matches the pixel art aesthetic perfectly.
-
-const hud = {
-  drawLiveScore() {
-    ctx.save();
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'top';
-    ctx.font         = '26px "Press Start 2P", monospace';
-
-    // black outline/shadow — same trick as the original strokeText approach
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillText(score, GAME_W / 2 + 2, 28);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(score, GAME_W / 2, 26);
-
-    ctx.restore();
-  },
-
-  // the score panel that appears on the Game Over screen
-  drawScorePanel() {
-    const PW = 210;
-    const PH = 64;
-    const PX = (GAME_W - PW) / 2;
-    const PY = GAME_H * 0.52;
-
-    // panel background with rounded corners
-    ctx.save();
-    ctx.fillStyle = 'rgba(8, 8, 18, 0.72)';
-    roundRect(PX, PY, PW, PH, 9);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-    ctx.lineWidth   = 1.5;
-    roundRect(PX, PY, PW, PH, 9);
-    ctx.stroke();
-
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-
-    // current score
-    ctx.font      = '11px "Press Start 2P", monospace';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(`SCORE  ${score}`, GAME_W / 2, PY + 20);
-
-    // best score — gold with a glow
-    ctx.font        = '11px "Press Start 2P", monospace';
-    ctx.fillStyle   = '#FFD700';
-    ctx.shadowColor = '#FFD700';
-    ctx.shadowBlur  = 7;
-    ctx.fillText(`BEST   ${bestScore}`, GAME_W / 2, PY + 44);
-    ctx.shadowBlur  = 0;
-    ctx.restore();
-  },
-};
-
-
-// ─── UI SCREENS ───────────────────────────────────────────────────────────────
-// GET READY  → uses getready.png sprite (174×160)
-// GAME OVER  → uses go.png sprite (188×144) + score panel
-// Tap hint is drawn with canvas — we don't have t0/t1 PNG files
-
-const ui = {
-  // animated tap/click hint — bobs up and down
-  drawTapHint(x, y) {
-    const bob   = Math.sin(frameCount * 0.1) * 5;
-    const alpha = 0.55 + Math.sin(frameCount * 0.1) * 0.4;
-
-    ctx.save();
-    ctx.translate(x, y + bob);
-    ctx.globalAlpha = alpha;
-
-    // finger shape
-    ctx.fillStyle   = 'rgba(255, 255, 255, 0.92)';
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    roundRect(-8, -22, 18, 28, 9);
-    ctx.fill();
-    ctx.stroke();
-
-    // fingernail detail
-    ctx.fillStyle = 'rgba(210, 185, 160, 0.85)';
-    ctx.beginPath();
-    ctx.arc(1, -17, 5, Math.PI, 0);
-    ctx.fill();
-
-    // tap ripple (cycles every 32 frames)
-    const ripple = (frameCount % 32) / 32;
-    ctx.globalAlpha = (1 - ripple) * 0.45;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.arc(1, 3, ripple * 22, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.restore();
-  },
-
-  drawGetReady() {
-    const sp = sprites.getReady;
-
     if (sp.ready && !sp.missing) {
-      // centre the getReady sprite vertically around 40% down
-      const x = (GAME_W - sp.naturalWidth)  / 2;
-      const y = GAME_H * 0.22;
-      ctx.drawImage(sp, x, y);
+      // figure out draw width from the sprite's actual aspect ratio
+      // only needs to happen once, but safe to recalculate every frame
+      const aspectRatio = sp.naturalWidth / sp.naturalHeight;
+      this.drawWidth = this.drawHeight * aspectRatio;
+
+      // centre the sprite on the bird's position
+      const dw = this.drawWidth;
+      const dh = this.drawHeight;
+
+      ctx.drawImage(sp, -dw / 2, -dh / 2, dw, dh);
     } else {
-      // canvas fallback title
-      ctx.save();
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'top';
-      ctx.font         = '15px "Press Start 2P", monospace';
-      ctx.fillStyle    = '#FFE000';
-      ctx.shadowColor  = '#FF8800';
-      ctx.shadowBlur   = 10;
-      ctx.fillText('GET READY!', GAME_W / 2, GAME_H * 0.25);
-      ctx.shadowBlur   = 0;
-      ctx.restore();
+      // fallback circle if the sprite didn't load for some reason
+      const r = this.r;
+      const g = ctx.createRadialGradient(-r * 0.2, -r * 0.3, 2, 0, 0, r);
+      g.addColorStop(0, '#FFE566');
+      g.addColorStop(0.6, '#FFC800');
+      g.addColorStop(1, '#C87A00');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    this.drawTapHint(GAME_W / 2, GAME_H * 0.72);
-
-    // best score reminder (only show if there's something to show)
-    if (bestScore > 0) {
-      ctx.save();
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font         = '8px "Press Start 2P", monospace';
-      ctx.fillStyle    = 'rgba(255, 255, 255, 0.65)';
-      ctx.fillText(`BEST: ${bestScore}`, GAME_W / 2, GAME_H * 0.83);
-      ctx.restore();
-    }
-  },
-
-  drawGameOver() {
-    const sp = sprites.gameOver;
-
-    // dim overlay to make the sprites pop out more
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
-    ctx.fillRect(0, 0, GAME_W, GAME_H);
-
-    if (sp.ready && !sp.missing) {
-      const x = (GAME_W - sp.naturalWidth)  / 2;
-      const y = GAME_H * 0.22;
-      ctx.drawImage(sp, x, y);
-    } else {
-      // canvas fallback
-      ctx.save();
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'top';
-      ctx.font         = '16px "Press Start 2P", monospace';
-      ctx.fillStyle    = '#FF4444';
-      ctx.shadowColor  = '#FF0000';
-      ctx.shadowBlur   = 16;
-      ctx.fillText('GAME OVER', GAME_W / 2, GAME_H * 0.22);
-      ctx.shadowBlur   = 0;
-      ctx.restore();
-    }
-
-    hud.drawScorePanel();
-
-    // pulsing "tap to retry" hint
-    const tapAlpha = 0.55 + Math.sin(frameCount * 0.1) * 0.4;
-    ctx.save();
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font         = '8px "Press Start 2P", monospace';
-    ctx.globalAlpha  = tapAlpha;
-    ctx.fillStyle    = '#ffffff';
-    ctx.fillText('TAP TO RETRY', GAME_W / 2, GAME_H * 0.86);
     ctx.restore();
   },
 };
 
 
-// ─── SCORE PERSISTENCE ────────────────────────────────────────────────────────
-// localStorage with a try/catch — private browsing mode throws on access
+// ---------------------------------------------------------------------------
+// HUD - score display during gameplay
+// ---------------------------------------------------------------------------
 
-function saveBestScore() {
+function drawScore() {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = '28px "Press Start 2P", monospace';
+
+  // dark shadow first so the white text is readable over the sky
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillText(score, GAME_W / 2 + 2, 30);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(score, GAME_W / 2, 28);
+
+  ctx.restore();
+}
+
+
+// ---------------------------------------------------------------------------
+// UI screens - get ready and game over
+// ---------------------------------------------------------------------------
+
+// animated tap hint - the little hand icon
+// drawn with canvas since we don't have the tap sprite files
+function drawTapHint(x, y) {
+  const bob = Math.sin(frameCount * 0.09) * 6;
+  const alpha = 0.5 + Math.sin(frameCount * 0.09) * 0.45;
+
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.globalAlpha = alpha;
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.lineWidth = 1.5;
+
+  // finger body
+  ctx.beginPath();
+  roundRect(-9, -24, 20, 30, 10);
+  ctx.fill();
+  ctx.stroke();
+
+  // fingernail
+  ctx.fillStyle = 'rgba(215, 190, 165, 0.85)';
+  ctx.beginPath();
+  ctx.arc(1, -19, 5.5, Math.PI, 0);
+  ctx.fill();
+
+  // tap ripple animation that loops every 28 frames
+  const ripple = (frameCount % 28) / 28;
+  ctx.globalAlpha = (1 - ripple) * 0.4;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(1, 3, ripple * 24, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawGetReady() {
+  const sp = sprites.getReady;
+
+  if (sp.ready && !sp.missing) {
+    // centre the sprite horizontally, position it in the upper-middle area
+    const sw = sp.naturalWidth;
+    const sh = sp.naturalHeight;
+    // scale it up a bit since our canvas is wider than the original 276px
+    const scale = GAME_W / 276;
+    const dw = sw * scale;
+    const dh = sh * scale;
+    const x = (GAME_W - dw) / 2;
+    const y = GAME_H * 0.2;
+    ctx.drawImage(sp, x, y, dw, dh);
+  } else {
+    // text fallback
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '16px "Press Start 2P", monospace';
+    ctx.fillStyle = '#FFE000';
+    ctx.shadowColor = '#FF8800';
+    ctx.shadowBlur = 10;
+    ctx.fillText('GET READY!', GAME_W / 2, GAME_H * 0.28);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  drawTapHint(GAME_W / 2, GAME_H * 0.72);
+
+  // show the best score if the player has played before
+  if (bestScore > 0) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '9px "Press Start 2P", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.fillText('BEST: ' + bestScore, GAME_W / 2, GAME_H * 0.84);
+    ctx.restore();
+  }
+}
+
+function drawGameOver() {
+  // dim everything behind the game over UI
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.44)';
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+  const sp = sprites.gameOver;
+
+  if (sp.ready && !sp.missing) {
+    const scale = GAME_W / 276;
+    const dw = sp.naturalWidth * scale;
+    const dh = sp.naturalHeight * scale;
+    ctx.drawImage(sp, (GAME_W - dw) / 2, GAME_H * 0.2, dw, dh);
+  } else {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '18px "Press Start 2P", monospace';
+    ctx.fillStyle = '#FF4444';
+    ctx.shadowColor = '#FF0000';
+    ctx.shadowBlur = 14;
+    ctx.fillText('GAME OVER', GAME_W / 2, GAME_H * 0.24);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // score panel
+  const pw = 230;
+  const ph = 70;
+  const px = (GAME_W - pw) / 2;
+  const py = GAME_H * 0.50;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(6, 8, 18, 0.78)';
+  roundRect(px, py, pw, ph, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.lineWidth = 1.5;
+  roundRect(px, py, pw, ph, 10);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.font = '12px "Press Start 2P", monospace';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('SCORE  ' + score, GAME_W / 2, py + 22);
+
+  ctx.fillStyle = '#FFD700';
+  ctx.shadowColor = '#FFD700';
+  ctx.shadowBlur = 8;
+  ctx.font = '12px "Press Start 2P", monospace';
+  ctx.fillText('BEST   ' + bestScore, GAME_W / 2, py + 49);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // pulsing retry prompt
+  const pulse = 0.45 + Math.sin(frameCount * 0.09) * 0.5;
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('TAP TO PLAY AGAIN', GAME_W / 2, GAME_H * 0.85);
+  ctx.restore();
+}
+
+
+// ---------------------------------------------------------------------------
+// score persistence
+// ---------------------------------------------------------------------------
+
+function saveBest() {
   try {
     bestScore = Math.max(score, parseInt(localStorage.getItem('fapbird_best') || '0', 10));
     localStorage.setItem('fapbird_best', String(bestScore));
   } catch (_) {
+    // private browsing mode or storage blocked - just keep in memory
     bestScore = Math.max(score, bestScore);
   }
 }
 
-function loadBestScore() {
+function loadBest() {
   try {
     bestScore = parseInt(localStorage.getItem('fapbird_best') || '0', 10) || 0;
   } catch (_) {
@@ -879,21 +809,24 @@ function loadBestScore() {
 }
 
 
-// ─── INPUT HANDLING ───────────────────────────────────────────────────────────
-// Click, touchstart, and keyboard all funnel into one function.
-// Debounced to 90ms so a single tap doesn't fire twice on some devices.
+// ---------------------------------------------------------------------------
+// input handling
+// ---------------------------------------------------------------------------
+// all three input types (click, touch, keyboard) call the same function.
+// the 90ms debounce stops a single tap from registering twice on devices
+// that fire both touchstart and click events.
 
-let lastInputTime = 0;
+let lastInput = 0;
 
 function handleInput() {
   const now = Date.now();
-  if (now - lastInputTime < 90) return;
-  lastInputTime = now;
+  if (now - lastInput < 90) return;
+  lastInput = now;
 
   switch (state) {
     case STATE.READY:
       state = STATE.PLAY;
-      sfx.start.play(0.55);
+      sfx.start.play(0.5);
       break;
 
     case STATE.PLAY:
@@ -901,86 +834,85 @@ function handleInput() {
       break;
 
     case STATE.DEAD:
-      // only allow restart once the bird has fully settled on the ground
-      if (bird.vy === 0) {
-        restartGame();
-      }
+      // don't restart until the bird has actually landed on the ground
+      if (bird.vy === 0) restartGame();
       break;
   }
 }
 
 function restartGame() {
-  state            = STATE.READY;
-  score            = 0;
-  scrollSpeed      = 2.2;
-  deathSfxPlayed   = false;
-  particles.pool   = [];
+  state = STATE.READY;
+  score = 0;
+  deathSoundPlayed = false;
+  particles.list = [];
   bird.reset();
   pipes.reset();
-  loadBestScore();
+  loadBest();
 }
 
-// mouse / touch
-canvas.addEventListener('click',      handleInput);
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleInput(); }, { passive: false });
+canvas.addEventListener('click', handleInput);
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleInput();
+}, { passive: false });
 
-// keyboard — Space, W, Up arrow, Enter all work
 document.addEventListener('keydown', (e) => {
+  // space, W, up arrow, enter
   if ([32, 87, 38, 13].includes(e.keyCode)) {
     e.preventDefault();
     handleInput();
   }
 });
 
-// make canvas focusable so keyboard events work when canvas is focused
 canvas.tabIndex = 1;
 canvas.focus();
 
 
-// ─── UTILITY: ROUNDED RECT PATH ───────────────────────────────────────────────
-// ctx.roundRect() isn't in all browsers yet, so rolling our own
+// ---------------------------------------------------------------------------
+// utility
+// ---------------------------------------------------------------------------
 
+// browsers are inconsistent about ctx.roundRect() so just rolling our own
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y,     x + w, y + r,     r);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
   ctx.lineTo(x + w, y + h - r);
   ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
   ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x,     y + h, x,     y + h - r, r);
-  ctx.lineTo(x,     y + r);
-  ctx.arcTo(x,     y,     x + r, y,         r);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
   ctx.closePath();
 }
 
 
-// ─── MAIN GAME LOOP ───────────────────────────────────────────────────────────
-// requestAnimationFrame keeps us in sync with the display refresh rate.
-// Much smoother than setInterval and doesn't drift.
+// ---------------------------------------------------------------------------
+// main loop
+// ---------------------------------------------------------------------------
 
 function gameLoop() {
   ctx.clearRect(0, 0, GAME_W, GAME_H);
 
-  // apply screen shake by translating the whole context
+  // apply shake by offsetting the canvas transform for this frame
   ctx.save();
   ctx.translate(shake.x, shake.y);
 
-  // draw order matters — back to front
+  // draw order: background first, then pipes, ground, bird, particles, UI on top
   background.draw();
   pipes.draw();
   ground.draw();
   bird.draw();
   particles.draw();
 
-  // UI overlays
-  if (state === STATE.READY) ui.drawGetReady();
-  if (state === STATE.PLAY)  hud.drawLiveScore();
-  if (state === STATE.DEAD)  ui.drawGameOver();
+  if (state === STATE.READY) drawGetReady();
+  if (state === STATE.PLAY)  drawScore();
+  if (state === STATE.DEAD)  drawGameOver();
 
   ctx.restore();
 
-  // update game objects after drawing so frame 0 always shows a clean scene
+  // update after drawing so the first frame always shows a clean state
   shake.update();
   ground.update();
   pipes.update();
@@ -992,29 +924,20 @@ function gameLoop() {
 }
 
 
-// ─── BOOT ─────────────────────────────────────────────────────────────────────
-// Wait for both the custom font AND the key sprites to be ready before
-// starting the loop. This avoids the 1-2 frame flicker where text shows
-// in a fallback font.
+// ---------------------------------------------------------------------------
+// boot
+// ---------------------------------------------------------------------------
 
-loadBestScore();
+loadBest();
 
-// update ground scroll width once sprite is known
+// once sprites load, update the ground sprite width and rebuild caches
 sprites.ground.addEventListener('load', () => {
-  ground.GW = sprites.ground.naturalWidth;  // 552
-  buildOffscreenCaches();
+  ground.spriteWidth = sprites.ground.naturalWidth;
+  buildCaches();
 });
 
-// in case the sprites load before we attach listeners (cached)
-if (sprites.ground.complete && !sprites.ground.missing) {
-  ground.GW = sprites.ground.naturalWidth;
-}
-
-// small timeout to let images start loading before we build caches
-// (the build function checks .ready flags internally)
-setTimeout(buildOffscreenCaches, 50);
-
-// start the loop — document.fonts.ready ensures the pixel font is loaded
+// start the loop once the custom font is ready
+// this stops the score from flashing in system font for the first frame
 document.fonts.ready.then(() => {
   gameLoop();
 });
