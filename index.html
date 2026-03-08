@@ -2,27 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#0a0a1a" />
+  <!-- critical for mobile: prevents zoom, ensures full viewport -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="theme-color" content="#30c0df" />
   <title>Fap-Bird 🐦</title>
 
-  <!-- pixel font for that retro arcade feel -->
+  <!-- pixel font for score — matches the sprite aesthetic perfectly -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="game-wrapper">
+  <!-- wrapper handles centering + the CSS scale trick for fullscreen -->
+  <div id="wrap">
     <canvas id="canvas"></canvas>
-
-    <!-- scanline overlay for that crt monitor vibe -->
-    <div id="scanlines"></div>
-
-    <!-- little corner tag, feels handmade -->
-    <div id="corner-tag">v1.0</div>
   </div>
 
   <script src="game.js"></script>

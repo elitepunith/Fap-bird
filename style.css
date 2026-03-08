@@ -1,5 +1,7 @@
 /* fap-bird styles
-   keeping it simple but intentional — dark, neon, retro arcade */
+   The canvas stays at its native 276×414 game resolution internally.
+   We scale it up with CSS transform so it fills the entire screen
+   without stretching — this keeps all sprite sizes pixel-perfect. */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -11,20 +13,18 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000;
-  /* just in case canvas takes a sec to load */
-  background: radial-gradient(ellipse at center, #0d1b3e 0%, #0a0a1a 100%);
+  /* sky color matches the game canvas bg so there's no flash */
+  background: #30c0df;
 }
 
 body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: 'Press Start 2P', monospace;
 }
 
-#game-wrapper {
-  position: relative;
+#wrap {
+  /* wrapper is what we actually scale — keeps canvas centered */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -34,86 +34,19 @@ body {
 
 #canvas {
   display: block;
-  /* crisp pixels on zoom — important for pixel art feel */
+  /* crisp pixel rendering — important for pixel-art sprites */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  /* cursor: default on desktop, invisible on mobile touch */
   cursor: pointer;
-
-  /* subtle border glow */
-  border: 2px solid rgba(0, 255, 68, 0.3);
-  box-shadow:
-    0 0 20px rgba(0, 255, 68, 0.15),
-    0 0 60px rgba(0, 255, 68, 0.05),
-    inset 0 0 30px rgba(0, 0, 0, 0.5);
-
-  /* on desktop it fills screen, on mobile too */
-  max-width: 100vw;
-  max-height: 100vh;
-}
-
-/* scanline overlay — gives it that old crt monitor look */
-#scanlines {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 2px,
-    rgba(0, 0, 0, 0.06) 2px,
-    rgba(0, 0, 0, 0.06) 4px
-  );
-  z-index: 10;
-}
-
-/* little version tag in the corner */
-#corner-tag {
-  position: fixed;
-  bottom: 12px;
-  right: 14px;
-  font-family: 'Press Start 2P', monospace;
-  font-size: 9px;
-  color: rgba(0, 255, 68, 0.35);
-  letter-spacing: 1px;
-  z-index: 20;
-  pointer-events: none;
-  user-select: none;
-}
-
-/* prevent blue tap highlight on mobile */
-canvas {
+  /* no tap highlight flash on mobile */
   -webkit-tap-highlight-color: transparent;
   outline: none;
+  /* transform-origin centered so the scale looks right */
+  transform-origin: center center;
 }
 
-/* on really wide screens, cap the canvas width a bit
-   so it doesn't look absurd on ultrawide monitors */
-@media (min-aspect-ratio: 3/2) {
-  #canvas {
-    height: 100vh;
-    width: auto;
-  }
-}
-
-/* mobile — make sure it's truly fullscreen */
-@media (max-width: 600px) {
-  #canvas {
-    border-width: 1px;
-  }
-  #corner-tag {
-    display: none;
-  }
-}
-
-/* little loading flash — hides any initial flicker */
+/* prevent the body from scrolling when user swipes on mobile */
 body {
-  animation: fadeIn 0.3s ease-in;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  touch-action: none;
 }

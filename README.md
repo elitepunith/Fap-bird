@@ -1,64 +1,53 @@
 # 🐦 Fap-Bird
 
-A Flappy Bird clone with a neon night-city aesthetic.
-No images, no sound files — everything is drawn and generated with code.
+Flappy Bird using the original pixel-art sprite assets — fullscreen, mobile responsive.
 
 ## Project Structure
 
 ```
 fap-bird/
-├── index.html      ← entry point, minimal markup
-├── style.css       ← fullscreen layout + CRT scanline overlay
-├── game.js         ← entire game (canvas drawing, physics, audio)
-├── vercel.json     ← static deployment config
-└── README.md       ← you're here
+├── index.html        ← entry point
+├── style.css         ← fullscreen CSS transform scaling
+├── game.js           ← entire game engine
+├── vercel.json       ← static deploy config
+├── img/
+│   ├── BG.png        ← background (276×228)
+│   ├── ground.png    ← ground strip (552×112)
+│   ├── toppipe.png   ← top pipe (52×400)
+│   ├── botpipe.png   ← bottom pipe (52×400)
+│   ├── getready.png  ← "Get Ready" UI (174×160)
+│   └── go.png        ← "Game Over" UI (188×144)
+└── sfx/
+    ├── start.wav
+    ├── flap.wav
+    ├── score.wav
+    ├── hit.wav
+    └── die.wav
 ```
 
-## Features
+> Bird sprites (b0/b1/b2) are drawn with Canvas API — no extra files needed.
 
-- **Zero external assets** — sprites drawn with Canvas API, sounds via Web Audio API
-- **Night city parallax** — two-layer scrolling skyline with lit windows + moon
-- **Particle effects** — flap puffs, death explosion
-- **Screen shake** on collision
-- **High score** saved in localStorage
-- **Progressive difficulty** — pipes get faster every 5 points
-- **Mobile responsive** — touch input, fills screen on any device
-- **Keyboard support** — Space / W / ↑ / Enter
+## How Fullscreen Works
+
+The canvas stays at its native **276×414** resolution (matching the sprite assets).
+A CSS `transform: scale(N)` makes it fill the screen on any device without stretching.
+This keeps every pixel crisp and no sprite coordinates need to change.
 
 ## Controls
 
-| Input        | Action     |
-|-------------|------------|
-| Click / Tap  | Flap       |
-| Space        | Flap       |
-| W or ↑       | Flap       |
-| Enter        | Flap       |
+| Input           | Action |
+|----------------|--------|
+| Click / Tap     | Flap   |
+| Space / W / ↑   | Flap   |
+| Enter           | Flap   |
 
 ## Deploy to Vercel
 
-### Option A — Vercel CLI (fastest)
 ```bash
+# Option A — CLI
 npm i -g vercel
-cd fap-bird
-vercel
-# follow prompts, it'll detect static and deploy instantly
-```
+cd fap-bird && vercel
 
-### Option B — Vercel Dashboard (no CLI)
-1. Push this folder to a GitHub repo
-2. Go to vercel.com → New Project → Import repo
-3. Framework preset: **Other**
-4. Root directory: leave as-is
-5. Click Deploy ✓
-
-That's it — no build step, no dependencies.
-
-## Local Development
-
-Just open `index.html` in a browser.
-Or use any static server:
-```bash
-npx serve .
-# or
-python3 -m http.server 3000
+# Option B — GitHub
+# Push this folder → vercel.com → New Project → Other framework → Deploy
 ```

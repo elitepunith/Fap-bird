@@ -1,105 +1,118 @@
 // fap-bird — game.js
-// drew all the sprites with canvas instead of images, so there's nothing to load
-// web audio api handles sounds too — completely self-contained
+// Uses the original pixel-art assets for BG, pipes, ground, getready, gameover.
+// Bird is drawn with canvas (no b0/b1/b2 sprite files needed).
+// Canvas stays at native 276×414 — CSS scale fills the screen.
 
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+'use strict';
 
-// game state machine — simple enum-ish thing
-const STATE = { MENU: 0, PLAYING: 1, DEAD: 2 };
-let state = STATE.MENU;
+// ─────────────────────────────────────────────
+//  CANVAS SETUP
+//  Native game resolution matches the original assets exactly.
+//  We scale via CSS transform so every sprite pixel stays crisp.
+// ─────────────────────────────────────────────
+const GAME_W = 276;
+const GAME_H = 414;
 
-// some globals
+const scrn = document.getElementById('canvas');
+const ctx  = scrn.getContext('2d');
+
+scrn.width  = GAME_W;
+scrn.height = GAME_H;
+
+// work out the CSS scale needed to fill the viewport
+function resizeToFit() {
+  const scaleX = window.innerWidth  / GAME_W;
+  const scaleY = window.innerHeight / GAME_H;
+  // use the smaller axis so nothing gets clipped
+  const scale  = Math.min(scaleX, scaleY);
+  scrn.style.transform = `scale(${scale})`;
+  // also stretch background to cover any leftover body area
+  document.body.style.background = '#30c0df';
+}
+
+window.addEventListener('resize', resizeToFit);
+resizeToFit();
+
+
+// ─────────────────────────────────────────────
+//  GAME STATE
+// ─────────────────────────────────────────────
+const STATE = { READY: 0, PLAY: 1, DEAD: 2 };
+let state  = STATE.READY;
 let frames = 0;
-let score = 0;
-let bestScore = 0;
-let gameSpeed = 2.8;
-let audioCtx = null; // lazy init on first interaction (browser policy)
+let dx     = 2.2;  // base scroll speed (slightly faster than original for more fun)
+
 
 // ─────────────────────────────────────────────
-//  CANVAS SIZING
-//  fills the screen while keeping portrait ratio
+//  ASSET LOADING
+//  Simple helper — load images, track when all are ready.
+//  Real .wav files are used for sounds.
 // ─────────────────────────────────────────────
-function resizeCanvas() {
-  const W = window.innerWidth;
-  const H = window.innerHeight;
-  const targetRatio = 9 / 16;
+let assetsLoaded   = 0;
+let assetsTotal    = 0;
+let assetsReady    = false;
 
-  if (W / H > targetRatio) {
-    // landscape or wide — fit by height
-    canvas.height = H;
-    canvas.width  = Math.floor(H * targetRatio);
-  } else {
-    // portrait or square — fit by width
-    canvas.width  = W;
-    canvas.height = Math.floor(W / targetRatio);
-  }
+function loadImg(src) {
+  const img = new Image();
+  assetsTotal++;
+  img.onload  = () => { assetsLoaded++; if (assetsLoaded >= assetsTotal) assetsReady = true; };
+  img.onerror = () => { assetsLoaded++; console.warn('missing asset:', src); if (assetsLoaded >= assetsTotal) assetsReady = true; };
+  img.src = src;
+  return img;
 }
 
-
-// ─────────────────────────────────────────────
-//  AUDIO  (web audio api — no .wav files)
-//  tones are generated on the fly, old school style
-// ─────────────────────────────────────────────
-function initAudio() {
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  } catch (e) {
-    // some old browsers don't have it, that's fine
-    audioCtx = null;
-  }
+// sounds — wrapped so they don't crash if file is missing
+function makeSound(src) {
+  const a = new Audio();
+  // clone trick so you can play the same sound overlapping (e.g. fast flapping)
+  a.src = src;
+  return {
+    play() {
+      try {
+        const clone = a.cloneNode();
+        clone.volume = 0.6;
+        clone.play().catch(() => {});  // browser may block until user gesture — that's fine
+      } catch (e) {}
+    }
+  };
 }
 
-function playTone(freq, endFreq, duration, type = 'square', vol = 0.25) {
-  if (!audioCtx) return;
-  try {
-    const osc  = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + duration);
-    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-    osc.start();
-    osc.stop(audioCtx.currentTime + duration + 0.01);
-  } catch (e) {
-    // audio can fail silently, game still works
-  }
-}
+// load all the real sprite assets
+const SPRITES = {
+  bg      : loadImg('img/BG.png'),
+  ground  : loadImg('img/ground.png'),
+  toppipe : loadImg('img/toppipe.png'),
+  botpipe : loadImg('img/botpipe.png'),
+  getReady: loadImg('img/getready.png'),
+  gameOver: loadImg('img/go.png'),
+};
 
 const SFX = {
-  flap  : () => playTone(380, 220, 0.12, 'square', 0.2),
-  score : () => { playTone(660, 880, 0.08, 'square', 0.2); setTimeout(() => playTone(880, 1100, 0.08, 'square', 0.15), 80); },
-  hit   : () => playTone(220, 60, 0.35, 'sawtooth', 0.4),
-  die   : () => setTimeout(() => playTone(150, 40, 0.5, 'sawtooth', 0.35), 200),
+  start : makeSound('sfx/start.wav'),
+  flap  : makeSound('sfx/flap.wav'),
+  score : makeSound('sfx/score.wav'),
+  hit   : makeSound('sfx/hit.wav'),
+  die   : makeSound('sfx/die.wav'),
 };
 
 
 // ─────────────────────────────────────────────
 //  SCREEN SHAKE
-//  a little juice goes a long way
+//  Adds a lot of game-feel on death
 // ─────────────────────────────────────────────
 const shake = {
-  x: 0, y: 0,
-  power: 0,
-  frames: 0,
+  x: 0, y: 0, power: 0, life: 0,
 
-  trigger(power, frames) {
-    this.power  = power;
-    this.frames = frames;
-  },
+  trigger(power, life) { this.power = power; this.life = life; },
 
   update() {
-    if (this.frames > 0) {
-      this.x = (Math.random() - 0.5) * this.power;
-      this.y = (Math.random() - 0.5) * this.power;
-      this.power  *= 0.88;
-      this.frames -= 1;
+    if (this.life > 0) {
+      this.x     = (Math.random() - 0.5) * this.power;
+      this.y     = (Math.random() - 0.5) * this.power;
+      this.power *= 0.86;
+      this.life  -= 1;
     } else {
-      this.x = 0;
-      this.y = 0;
+      this.x = 0; this.y = 0;
     }
   },
 };
@@ -107,23 +120,23 @@ const shake = {
 
 // ─────────────────────────────────────────────
 //  PARTICLES
-//  used for flap puffs and death explosion
+//  puffs on flap, explosion on death
 // ─────────────────────────────────────────────
 const particles = {
   list: [],
 
-  emit(x, y, count, colors) {
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const spd   = Math.random() * 3.5 + 0.8;
+  emit(x, y, n, cols) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 0.8 + Math.random() * 3.2;
       this.list.push({
         x, y,
-        vx   : Math.cos(angle) * spd,
-        vy   : Math.sin(angle) * spd - 1.5,  // slight upward bias
-        life : 1,
-        decay: 0.04 + Math.random() * 0.04,
-        r    : 2 + Math.random() * 4,
-        color: colors[Math.floor(Math.random() * colors.length)],
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s - 1.2,
+        life: 1,
+        decay: 0.045 + Math.random() * 0.04,
+        r: 1.5 + Math.random() * 3,
+        col: cols[Math.floor(Math.random() * cols.length)],
       });
     }
   },
@@ -132,8 +145,8 @@ const particles = {
     this.list = this.list.filter(p => {
       p.x  += p.vx;
       p.y  += p.vy;
-      p.vy += 0.15;  // gravity
-      p.vx *= 0.97;  // drag
+      p.vy += 0.18;
+      p.vx *= 0.96;
       p.life -= p.decay;
       return p.life > 0;
     });
@@ -143,7 +156,7 @@ const particles = {
     this.list.forEach(p => {
       ctx.save();
       ctx.globalAlpha = p.life;
-      ctx.fillStyle   = p.color;
+      ctx.fillStyle   = p.col;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
       ctx.fill();
@@ -154,351 +167,196 @@ const particles = {
 
 
 // ─────────────────────────────────────────────
-//  CITY SKYLINE
-//  parallax — two layers of buildings scroll at different speeds
-//  looks way cooler than a flat background
+//  BACKGROUND
+//  The BG sprite is 276×228. Draw it twice stacked
+//  to fill the full 414px height canvas.
 // ─────────────────────────────────────────────
-const cityBg = {
-  far   : [],
-  close : [],
-  clouds: [],
-  farOffset  : 0,
-  closeOffset: 0,
-  cloudOffset: 0,
-
-  init() {
-    this.far    = this._genBuildings(60, 20, 40, 25, 75);
-    this.close  = this._genBuildings(40, 30, 55, 50, 120);
-    this.clouds = this._genClouds(7);
-  },
-
-  _genBuildings(count, minW, maxW, minH, maxH) {
-    const list = [];
-    let x = 0;
-    for (let i = 0; i < count; i++) {
-      const w = minW + Math.random() * (maxW - minW);
-      const h = minH + Math.random() * (maxH - minH);
-      // random windows — some lit, some dark
-      const wins = [];
-      for (let wy = 6; wy < h - 6; wy += 10) {
-        for (let wx = 4; wx < w - 4; wx += 8) {
-          wins.push({ dx: wx, dy: wy, lit: Math.random() > 0.45 });
-        }
-      }
-      list.push({ x, w, h, wins });
-      x += w + 2 + Math.random() * 6;
-    }
-    return list;
-  },
-
-  _genClouds(count) {
-    return Array.from({ length: count }, () => ({
-      x    : Math.random() * canvas.width,
-      y    : canvas.height * (0.05 + Math.random() * 0.28),
-      r    : canvas.width * (0.05 + Math.random() * 0.07),
-      speed: 0.12 + Math.random() * 0.18,
-    }));
-  },
-
-  update() {
-    const spd = state === STATE.PLAYING ? gameSpeed : 0.4;
-    this.farOffset    += spd * 0.25;
-    this.closeOffset  += spd * 0.55;
-    this.cloudOffset  += spd * 0.12;
-  },
-
-  _drawBuildingLayer(list, totalW, offset, color, winColorLit) {
-    const gY = canvas.height * 0.875;
-    const off = offset % totalW;
-
-    // draw twice so scrolling wraps seamlessly
-    for (let pass = 0; pass < 2; pass++) {
-      const xShift = pass * totalW - off;
-      list.forEach(b => {
-        const bx = b.x + xShift;
-        const by = gY - b.h;
-        if (bx + b.w < -10 || bx > canvas.width + 10) return; // skip offscreen
-
-        ctx.fillStyle = color;
-        ctx.fillRect(bx, by, b.w, b.h);
-
-        // windows
-        b.wins.forEach(w => {
-          if (!w.lit) return;
-          ctx.fillStyle = winColorLit;
-          ctx.fillRect(bx + w.dx, by + w.dy, 4, 3);
-        });
-      });
-    }
-  },
-
-  _totalWidth(list) {
-    if (!list.length) return canvas.width;
-    const last = list[list.length - 1];
-    return last.x + last.w + 8;
-  },
-
+const bg = {
   draw() {
-    const gY = canvas.height * 0.875;
-
-    // night sky gradient
-    const sky = ctx.createLinearGradient(0, 0, 0, gY);
-    sky.addColorStop(0, '#050810');
-    sky.addColorStop(0.45, '#0b1535');
-    sky.addColorStop(0.75, '#152050');
-    sky.addColorStop(1,    '#0a1228');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, canvas.width, gY);
-
-    // moon (top right area)
-    const mX = canvas.width * 0.84;
-    const mY = canvas.height * 0.11;
-    const mR = canvas.width * 0.065;
-    ctx.save();
-    ctx.shadowColor = '#fffad0';
-    ctx.shadowBlur  = 28;
-    ctx.fillStyle   = '#fffad0';
-    ctx.beginPath();
-    ctx.arc(mX, mY, mR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // crater details
-    [[0.3, -0.2, 0.18], [-0.15, 0.3, 0.11], [0.1, 0.1, 0.07]].forEach(([dx, dy, cr]) => {
-      ctx.fillStyle = 'rgba(180, 170, 130, 0.35)';
-      ctx.beginPath();
-      ctx.arc(mX + dx * mR, mY + dy * mR, mR * cr, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.restore();
-
-    // clouds (soft, barely visible)
-    const cloudOff = this.cloudOffset;
-    this.clouds.forEach(c => {
-      const cx = (c.x + cloudOff * c.speed) % (canvas.width * 1.3) - canvas.width * 0.15;
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillStyle   = '#aaccff';
-      ctx.beginPath();
-      ctx.arc(cx, c.y, c.r, 0, Math.PI * 2);
-      ctx.arc(cx + c.r * 0.8, c.y - c.r * 0.3, c.r * 0.7, 0, Math.PI * 2);
-      ctx.arc(cx + c.r * 1.5, c.y + c.r * 0.1, c.r * 0.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    });
-
-    // far buildings (darker, smaller windows)
-    this._drawBuildingLayer(
-      this.far,
-      this._totalWidth(this.far),
-      this.farOffset,
-      '#07101e',
-      'rgba(255, 220, 100, 0.5)'
-    );
-
-    // close buildings
-    this._drawBuildingLayer(
-      this.close,
-      this._totalWidth(this.close),
-      this.closeOffset,
-      '#04080f',
-      'rgba(255, 230, 120, 0.7)'
-    );
-  },
-};
-
-
-// ─────────────────────────────────────────────
-//  STARS
-//  tiny dots that slowly drift — adds depth
-// ─────────────────────────────────────────────
-const stars = {
-  list: [],
-
-  init() {
-    this.list = Array.from({ length: 70 }, () => ({
-      x    : Math.random() * canvas.width,
-      y    : Math.random() * canvas.height * 0.72,
-      r    : 0.5 + Math.random() * 1.5,
-      twink: Math.random() * Math.PI * 2,
-      speed: 0.08 + Math.random() * 0.3,
-    }));
-  },
-
-  update() {
-    const spd = state === STATE.PLAYING ? gameSpeed : 0.4;
-    this.list.forEach(s => {
-      s.x -= s.speed * (spd / 2.8);
-      s.twink += 0.04;
-      if (s.x < 0) s.x = canvas.width;
-    });
-  },
-
-  draw() {
-    this.list.forEach(s => {
-      const alpha = 0.45 + Math.sin(s.twink) * 0.4;
-      ctx.fillStyle = `rgba(220, 230, 255, ${alpha})`;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    if (!SPRITES.bg.complete) {
+      // fallback sky color while loading
+      ctx.fillStyle = '#30c0df';
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+      return;
+    }
+    const h = SPRITES.bg.height;  // 228
+    // tile vertically — draw top piece, then second piece below
+    ctx.drawImage(SPRITES.bg, 0, 0);
+    // fill remaining below with the bottom portion of BG
+    ctx.drawImage(SPRITES.bg, 0, 0, GAME_W, GAME_H - h, 0, h, GAME_W, GAME_H - h);
   },
 };
 
 
 // ─────────────────────────────────────────────
 //  GROUND
-//  grassy bumpy ground, scrolls with game speed
+//  552×112 sprite (exactly 2× game width) — scrolls left
 // ─────────────────────────────────────────────
-const ground = {
-  y      : 0,
-  height : 0,
-  offset : 0,
-  bumps  : [],
+const gnd = {
+  x   : 0,
+  y   : 0,  // set in update
+  draw() {
+    if (!SPRITES.ground.complete) return;
+    this.y = GAME_H - SPRITES.ground.height;  // 414 - 112 = 302
+    // draw twice so it tiles seamlessly while scrolling
+    ctx.drawImage(SPRITES.ground, this.x, this.y);
+    ctx.drawImage(SPRITES.ground, this.x + SPRITES.ground.width / 2, this.y);
+    ctx.drawImage(SPRITES.ground, this.x + SPRITES.ground.width, this.y);
+  },
+  update() {
+    if (state !== STATE.PLAY) return;
+    this.x -= dx;
+    // reset when we've scrolled exactly half the sprite width (seamless loop)
+    if (this.x <= -SPRITES.ground.width / 2) {
+      this.x = 0;
+    }
+  },
+};
 
-  init() {
-    this.bumps = Array.from({ length: 50 }, () => Math.random() * 5);
-    this.update();
+
+// ─────────────────────────────────────────────
+//  PIPES
+//  toppipe.png and botpipe.png are both 52×400.
+//  Gap between them is 85px (matches original).
+// ─────────────────────────────────────────────
+const pipes = {
+  gap    : 85,
+  list   : [],
+  timer  : 0,
+  spacing: 100,   // frames between spawns
+  moved  : true,  // for scoring — did bird pass this pipe?
+
+  reset() {
+    this.list  = [];
+    this.timer = 0;
+    this.moved = true;
+    this.spacing = 100;
+  },
+
+  // each pipe has an x position and a y offset
+  // y is negative so the top pipe sticks out from the top of screen
+  _spawn() {
+    const pipeH = SPRITES.toppipe.complete ? SPRITES.toppipe.height : 400;
+    this.list.push({
+      x    : GAME_W + 10,
+      y    : -210 * Math.min(Math.random() + 1, 1.8),  // same formula as original
+      scored: false,
+    });
   },
 
   update() {
-    this.height = canvas.height * 0.125;
-    this.y      = canvas.height - this.height;
-  },
+    if (state !== STATE.PLAY) return;
 
-  scroll(spd) {
-    if (state === STATE.PLAYING) {
-      this.offset = (this.offset + spd) % (canvas.width / 25);
+    this.timer++;
+    if (this.timer % this.spacing === 0) {
+      this._spawn();
     }
+
+    this.list.forEach(p => { p.x -= dx; });
+
+    // clean up pipes that scrolled off screen
+    const pipeW = SPRITES.toppipe.complete ? SPRITES.toppipe.width : 52;
+    this.list = this.list.filter(p => p.x > -pipeW - 10);
   },
 
   draw() {
-    const segs  = 25;
-    const segW  = canvas.width / segs;
-    const gY    = this.y;
+    if (!SPRITES.toppipe.complete || !SPRITES.botpipe.complete) return;
+    const topH = SPRITES.toppipe.height;  // 400
 
-    // dirt fill
-    const dirt = ctx.createLinearGradient(0, gY, 0, canvas.height);
-    dirt.addColorStop(0,   '#7a4e28');
-    dirt.addColorStop(0.3, '#5c3318');
-    dirt.addColorStop(1,   '#3a1e08');
-    ctx.fillStyle = dirt;
-    ctx.fillRect(0, gY + 6, canvas.width, this.height);
-
-    // grass with bumps
-    ctx.fillStyle = '#2e8b1e';
-    ctx.beginPath();
-    ctx.moveTo(0, canvas.height);
-    ctx.lineTo(0, gY + 6);
-    for (let i = 0; i <= segs; i++) {
-      const idx = Math.floor((i + this.offset / segW) % this.bumps.length);
-      ctx.lineTo(i * segW, gY + 6 - (this.bumps[idx] || 0));
-    }
-    ctx.lineTo(canvas.width, canvas.height);
-    ctx.closePath();
-    ctx.fill();
-
-    // brighter grass top edge
-    ctx.fillStyle = '#40b82a';
-    ctx.beginPath();
-    ctx.moveTo(0, gY + 4);
-    for (let i = 0; i <= segs; i++) {
-      const idx = Math.floor((i + this.offset / segW) % this.bumps.length);
-      ctx.lineTo(i * segW, gY + 2 - (this.bumps[idx] || 0));
-    }
-    ctx.lineTo(canvas.width, gY + 4);
-    ctx.closePath();
-    ctx.fill();
+    this.list.forEach(p => {
+      // top pipe
+      ctx.drawImage(SPRITES.toppipe, p.x, p.y);
+      // bottom pipe — placed right below the gap
+      ctx.drawImage(SPRITES.botpipe, p.x, p.y + topH + this.gap);
+    });
   },
 };
 
 
 // ─────────────────────────────────────────────
 //  BIRD
-//  drawn entirely with canvas arcs/paths
-//  has a flapping wing animation
+//  Drawn with canvas — 4 frame wing animation.
+//  Matches the yellow-bird look from the original.
 // ─────────────────────────────────────────────
 const bird = {
-  x        : 0,
-  y        : 0,
+  x        : 60,
+  y        : 150,
   vy       : 0,
-  rot      : 0,      // rotation in radians
-  wingAng  : 0,
+  rot      : 0,    // degrees (matching original's degree-based rotation)
+  frame    : 0,
+  wingAngle: 0,
   wingDir  : 1,
   alive    : true,
-  radius   : 0,
-  gravity  : 0,
-  flapForce: 0,
-  deathY   : 0,      // where it lands on death
 
-  init() {
-    this.radius   = canvas.width * 0.055;
-    this.gravity  = canvas.height * 0.00028;
-    this.flapForce= canvas.height * 0.0088;
-    this.x        = canvas.width * 0.25;
-    this.reset();
-  },
+  // physics constants from original
+  gravity : 0.125,
+  thrust  : 3.6,
+  radius  : 12,   // collision radius (roughly half the original sprite width)
 
   reset() {
-    this.y     = canvas.height * 0.38;
+    this.y     = 150;
     this.vy    = 0;
     this.rot   = 0;
+    this.frame = 0;
     this.alive = true;
   },
 
   flap() {
-    if (!this.alive) return;
-    this.vy = -this.flapForce;
-    SFX.flap();
-    // little puff behind the bird when flapping
-    particles.emit(this.x - this.radius, this.y, 5, ['#FFE066', '#fff', '#FFB800']);
+    if (this.y > 0 && this.alive) {
+      SFX.flap.play();
+      this.vy = -this.thrust;
+      // feather puff effect
+      particles.emit(this.x - 8, this.y + 4, 6, ['#fff', '#FFE066', '#FFB800']);
+    }
+  },
+
+  setRotation() {
+    if (this.vy <= 0) {
+      this.rot = Math.max(-25, (-25 * this.vy) / (-1 * this.thrust));
+    } else {
+      this.rot = Math.min(90, (90 * this.vy) / (this.thrust * 2));
+    }
   },
 
   update() {
-    // wing flap animation — always going
-    this.wingAng += 0.18 * this.wingDir;
-    if (Math.abs(this.wingAng) > 0.45) this.wingDir *= -1;
+    // wing flap animation — runs regardless of state
+    this.wingAngle += 0.22 * this.wingDir;
+    if (Math.abs(this.wingAngle) > 0.5) this.wingDir *= -1;
 
-    if (!this.alive) {
-      // dead — fall fast and rotate sideways
-      this.vy += this.gravity * 2.5;
-      this.y  += this.vy;
-      this.rot = Math.PI / 2;
-      if (this.y >= ground.y - this.radius) {
-        this.y  = ground.y - this.radius;
-        this.vy = 0;
-      }
-      return;
-    }
+    // advance animation frame
+    if (frames % 5 === 0) this.frame = (this.frame + 1) % 4;
 
     switch (state) {
-      case STATE.MENU:
-        // gentle bob on menu screen
-        this.y   = canvas.height * 0.38 + Math.sin(frames * 0.055) * 9;
-        this.rot = Math.sin(frames * 0.055) * 0.18;
+      case STATE.READY:
+        // idle bob while waiting to start
+        this.rot = 0;
+        if (frames % 10 === 0) this.y += Math.sin(frames * (Math.PI / 180));
         break;
 
-      case STATE.PLAYING:
-        this.vy += this.gravity;
-        // cap falling speed so it doesn't go insane
-        this.vy  = Math.min(this.vy, canvas.height * 0.013);
-        this.y  += this.vy;
+      case STATE.PLAY:
+        this.vy  += this.gravity;
+        this.y   += this.vy;
+        this.setRotation();
 
-        // smooth rotation — nose up when rising, nose down when falling
-        const targetRot = this.vy > 0
-          ? Math.min(Math.PI / 2, this.vy * 3.2)
-          : Math.max(-0.45, this.vy * 2);
-        this.rot += (targetRot - this.rot) * 0.14;
-
-        // ceiling bounce
-        if (this.y - this.radius < 0) {
-          this.y  = this.radius;
-          this.vy = 0;
-        }
-
-        // floor collision → die
-        if (this.y + this.radius >= ground.y) {
-          this.y = ground.y - this.radius;
+        // hit the ground
+        if (this.y + this.radius >= gnd.y) {
+          this.y  = gnd.y - this.radius;
           this._die();
+        }
+        break;
+
+      case STATE.DEAD:
+        if (!this.alive) {
+          // keep falling after death until it hits the ground
+          if (this.y + this.radius < gnd.y) {
+            this.vy += this.gravity * 2;
+            this.y  += this.vy;
+            this.rot = 90;
+          } else {
+            this.vy = 0;
+            this.y  = gnd.y - this.radius;
+            this.rot = 90;
+          }
         }
         break;
     }
@@ -507,521 +365,394 @@ const bird = {
   _die() {
     if (!this.alive) return;
     this.alive = false;
-    SFX.hit();
-    SFX.die();
-    shake.trigger(7, 14);
-    particles.emit(this.x, this.y, 18, ['#FF5555', '#FF9900', '#FFE066', '#fff']);
-    // switch to dead state after a short delay so the death animation plays
+    SFX.hit.play();
+    shake.trigger(6, 14);
+    particles.emit(this.x, this.y, 16, ['#FF5555', '#FF9900', '#FFE066', '#fff', '#88ff66']);
     setTimeout(() => {
+      SFX.die.play();
       state = STATE.DEAD;
       _saveBest();
-    }, 700);
+    }, 400);
   },
 
+  // hand-drawn bird with canvas — yellow body, orange beak, animated wing
   draw() {
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.rotate(this.rot);
+    ctx.rotate(this.rot * (Math.PI / 180));
 
     const r = this.radius;
 
-    // drop shadow
+    // drop shadow (subtle)
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
     ctx.beginPath();
-    ctx.ellipse(3, r * 0.72, r * 0.72, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.ellipse(2, r * 0.8, r * 0.75, r * 0.2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
-    // body gradient
-    const bodyGrad = ctx.createRadialGradient(-r * 0.25, -r * 0.28, r * 0.08, 0, 0, r);
-    bodyGrad.addColorStop(0, '#FFE566');
-    bodyGrad.addColorStop(0.55, '#FFD000');
-    bodyGrad.addColorStop(1, '#CC8800');
-    ctx.fillStyle = bodyGrad;
+    // wing (behind body, rotates)
+    ctx.save();
+    ctx.rotate(this.wingAngle);
+    ctx.fillStyle = '#D4820A';
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.2, r * 0.05, r * 0.58, r * 0.28, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // body
+    const grad = ctx.createRadialGradient(-r * 0.2, -r * 0.3, r * 0.1, 0, 0, r);
+    grad.addColorStop(0, '#FFE566');
+    grad.addColorStop(0.5, '#FFC800');
+    grad.addColorStop(1, '#CC8800');
+    ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // wing — rotates based on wingAng
-    ctx.save();
-    ctx.rotate(this.wingAng);
-    ctx.fillStyle = '#CC8800';
+    // belly highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.beginPath();
-    ctx.ellipse(-r * 0.18, r * 0.05, r * 0.52, r * 0.26, -0.35, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // belly patch (lighter area)
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.beginPath();
-    ctx.ellipse(r * 0.08, r * 0.22, r * 0.42, r * 0.3, 0.2, 0, Math.PI * 2);
+    ctx.ellipse(r * 0.1, r * 0.25, r * 0.45, r * 0.3, 0.2, 0, Math.PI * 2);
     ctx.fill();
 
     // eye white
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#fff';
     ctx.beginPath();
-    ctx.arc(r * 0.3, -r * 0.18, r * 0.32, 0, Math.PI * 2);
+    ctx.arc(r * 0.3, -r * 0.2, r * 0.34, 0, Math.PI * 2);
     ctx.fill();
 
-    // pupil — slightly toward beak
+    // pupil
     ctx.fillStyle = '#1a1a2e';
     ctx.beginPath();
-    ctx.arc(r * 0.38, -r * 0.14, r * 0.16, 0, Math.PI * 2);
+    ctx.arc(r * 0.4, -r * 0.16, r * 0.17, 0, Math.PI * 2);
     ctx.fill();
 
     // eye shine
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#fff';
     ctx.beginPath();
-    ctx.arc(r * 0.44, -r * 0.2, r * 0.065, 0, Math.PI * 2);
+    ctx.arc(r * 0.46, -r * 0.22, r * 0.06, 0, Math.PI * 2);
     ctx.fill();
 
-    // beak (two triangles make a beak shape)
+    // beak
     ctx.fillStyle = '#FF8C00';
     ctx.beginPath();
-    ctx.moveTo(r * 0.6, -r * 0.08);
-    ctx.lineTo(r * 1.12, r * 0.04);
-    ctx.lineTo(r * 0.6, r * 0.22);
+    ctx.moveTo(r * 0.56,  -r * 0.1);
+    ctx.lineTo(r * 1.15,  r * 0.04);
+    ctx.lineTo(r * 0.56,  r * 0.2);
     ctx.closePath();
     ctx.fill();
-    // beak divider line
+
+    // beak divider
     ctx.strokeStyle = '#CC5500';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth   = 1.2;
     ctx.beginPath();
-    ctx.moveTo(r * 0.62, r * 0.07);
-    ctx.lineTo(r * 1.02, r * 0.07);
+    ctx.moveTo(r * 0.58, r * 0.05);
+    ctx.lineTo(r * 1.05, r * 0.05);
     ctx.stroke();
 
     ctx.restore();
   },
+
+  // collision check (same logic as original, adapted)
+  collisionCheck() {
+    if (!pipes.list.length) return false;
+    const pipeW = SPRITES.toppipe.complete ? SPRITES.toppipe.width   : 52;
+    const pipeH = SPRITES.toppipe.complete ? SPRITES.toppipe.height  : 400;
+    const r     = this.radius * 0.82;  // slightly forgiving hitbox
+
+    for (let i = 0; i < pipes.list.length; i++) {
+      const p     = pipes.list[i];
+      const roof  = p.y + pipeH;          // bottom of top pipe
+      const floor = roof + pipes.gap;     // top of bottom pipe
+
+      if (this.x + r > p.x && this.x - r < p.x + pipeW) {
+        // bird is horizontally inside the pipe zone
+        if (this.y - r <= roof || this.y + r >= floor) {
+          return true;  // hit!
+        }
+      }
+
+      // scoring — bird just passed this pipe
+      if (!p.scored && this.x - r > p.x + pipeW) {
+        p.scored = true;
+        UI.score.curr++;
+        SFX.score.play();
+        particles.emit(this.x, this.y - r, 7, ['#FFD700', '#fff', '#00ff88']);
+        // every 5 points, make it a little harder
+        if (UI.score.curr % 5 === 0) {
+          dx = Math.min(dx + 0.25, 5.0);
+          pipes.spacing = Math.max(pipes.spacing - 3, 72);
+        }
+      }
+    }
+    return false;
+  },
 };
 
 
 // ─────────────────────────────────────────────
-//  PIPES
-//  neon green, glow effect, collision detection
+//  UI
+//  Uses real getready.png and go.png sprites.
+//  Tap indicator drawn with canvas.
+//  Score drawn with Press Start 2P font.
 // ─────────────────────────────────────────────
-const pipes = {
-  list    : [],
-  timer   : 0,
-  interval: 90,     // frames between spawns
-  gap     : 0,      // pixel gap between top/bot pipe
-  width   : 0,
-  scored  : new Set(),  // track which pipes have been scored
-
-  init() {
-    this.gap   = canvas.height * 0.23;
-    this.width = canvas.width  * 0.145;
-    this.reset();
-  },
+const UI = {
+  score  : { curr: 0, best: 0 },
+  tapAnim: 0,  // for the hand-drawn tap icon bob
 
   reset() {
-    this.list   = [];
-    this.timer  = 50;  // first pipe comes a little early
-    this.scored.clear();
-    this.interval = 90;
+    this.score.curr = 0;
+    this.tapAnim    = 0;
   },
 
-  _spawn() {
-    const topMin = canvas.height * 0.12;
-    const topMax = canvas.height * 0.60;
-    const gapMid = topMin + Math.random() * (topMax - topMin);
-    this.list.push({
-      x   : canvas.width + this.width + 5,
-      mid : gapMid,
-      id  : frames,
-    });
-  },
+  // draws a little tap/click finger icon since we don't have t0/t1 pngs
+  _drawTapHint(x, y) {
+    const bob   = Math.sin(frames * 0.1) * 4;  // gentle bob
+    const bx    = x;
+    const by    = y + bob;
+    const alpha = 0.65 + Math.sin(frames * 0.1) * 0.3;
 
-  update() {
-    if (state !== STATE.PLAYING) return;
-
-    this.timer++;
-    if (this.timer >= this.interval) {
-      this._spawn();
-      this.timer = 0;
-    }
-
-    const spd = gameSpeed;
-    this.list.forEach(p => p.x -= spd);
-
-    // remove offscreen pipes
-    this.list = this.list.filter(p => p.x > -this.width * 2);
-
-    // scoring + collision
-    this.list.forEach(p => {
-      const topBot = p.mid - this.gap / 2;  // bottom edge of top pipe
-      const botTop = p.mid + this.gap / 2;  // top edge of bottom pipe
-
-      // did the bird clear this pipe?
-      if (p.x + this.width < bird.x && !this.scored.has(p.id)) {
-        this.scored.add(p.id);
-        score++;
-        SFX.score();
-        particles.emit(bird.x, bird.y - bird.radius, 8, ['#00ff88', '#00ffcc', '#fff']);
-        // gradually speed up — every 5 pipes
-        if (score % 5 === 0) {
-          gameSpeed     = Math.min(gameSpeed + 0.28, 5.5);
-          this.interval = Math.max(this.interval - 2, 68);
-        }
-      }
-
-      // collision check (using slightly shrunk hitbox — feels fairer)
-      if (!bird.alive) return;
-      const br  = bird.radius * 0.78;
-      const bx  = bird.x;
-      const by  = bird.y;
-      const pL  = p.x;
-      const pR  = p.x + this.width;
-
-      if (bx + br > pL && bx - br < pR) {
-        if (by - br < topBot || by + br > botTop) {
-          bird._die();
-        }
-      }
-    });
-  },
-
-  _drawSinglePipe(x, y, h, isTop) {
-    const w    = this.width;
-    const capH = Math.max(8, canvas.height * 0.038);
-    const capW = w * 1.18;
-    const capX = x - (capW - w) / 2;
-
-    // pipe body gradient (left-light-right-dark feel)
-    const pg = ctx.createLinearGradient(x, 0, x + w, 0);
-    pg.addColorStop(0,    '#126120');
-    pg.addColorStop(0.28, '#3ddf5e');
-    pg.addColorStop(0.65, '#1e9935');
-    pg.addColorStop(1,    '#0a3b12');
-    ctx.fillStyle = pg;
-
-    if (isTop) {
-      ctx.fillRect(x, y, w, h - capH);
-      // cap
-      const cg = ctx.createLinearGradient(capX, 0, capX + capW, 0);
-      cg.addColorStop(0,    '#126120');
-      cg.addColorStop(0.28, '#3ddf5e');
-      cg.addColorStop(1,    '#0a3b12');
-      ctx.fillStyle = cg;
-      ctx.fillRect(capX, h - capH + y, capW, capH);
-    } else {
-      ctx.fillRect(x, y + capH, w, h - capH);
-      // cap
-      const cg = ctx.createLinearGradient(capX, 0, capX + capW, 0);
-      cg.addColorStop(0,    '#126120');
-      cg.addColorStop(0.28, '#3ddf5e');
-      cg.addColorStop(1,    '#0a3b12');
-      ctx.fillStyle = cg;
-      ctx.fillRect(capX, y, capW, capH);
-    }
-
-    // highlight stripe on the left side
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    if (isTop) ctx.fillRect(x + w * 0.14, y, w * 0.13, h - capH);
-    else        ctx.fillRect(x + w * 0.14, y + capH, w * 0.13, h - capH);
-
-    // neon outline glow
     ctx.save();
-    ctx.shadowColor = '#00ff55';
-    ctx.shadowBlur  = 10;
-    ctx.strokeStyle = 'rgba(0, 255, 80, 0.5)';
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle   = 'rgba(255,255,255,0.9)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
     ctx.lineWidth   = 1.5;
-    if (isTop) {
-      ctx.strokeRect(x, y, w, h - capH);
-      ctx.strokeRect(capX, h - capH + y, capW, capH);
-    } else {
-      ctx.strokeRect(x, y + capH, w, h - capH);
-      ctx.strokeRect(capX, y, capW, capH);
-    }
-    ctx.shadowBlur = 0;
+
+    // finger pointer shape
+    ctx.beginPath();
+    ctx.roundRect
+      ? ctx.roundRect(bx - 6, by - 18, 14, 24, 7)
+      : (ctx.rect(bx - 6, by - 18, 14, 24));  // fallback for older browsers
+    ctx.fill();
+    ctx.stroke();
+
+    // fingernail
+    ctx.fillStyle = 'rgba(200,180,160,0.8)';
+    ctx.beginPath();
+    ctx.arc(bx + 1, by - 14, 4, Math.PI, 0);
+    ctx.fill();
+
+    // tap ripple
+    const ripple = (frames % 30) / 30;
+    ctx.globalAlpha = (1 - ripple) * 0.45;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.arc(bx + 1, by + 3, ripple * 18, 0, Math.PI * 2);
+    ctx.stroke();
+
     ctx.restore();
   },
 
-  draw() {
-    this.list.forEach(p => {
-      const topH = p.mid - this.gap / 2;
-      const botY = p.mid + this.gap / 2;
-      const botH = ground.y - botY;
+  drawReady() {
+    if (!SPRITES.getReady.complete) return;
+    const sp = SPRITES.getReady;
+    const x  = (GAME_W - sp.width)  / 2;
+    const y  = (GAME_H - sp.height) / 2 - 30;
+    ctx.drawImage(sp, x, y);
+    this._drawTapHint(GAME_W / 2, y + sp.height + 30);
+  },
 
-      this._drawSinglePipe(p.x, 0,    topH, true);
-      this._drawSinglePipe(p.x, botY, botH, false);
-    });
+  drawDead() {
+    if (!SPRITES.gameOver.complete) return;
+    const sp = SPRITES.gameOver;
+    const x  = (GAME_W - sp.width)  / 2;
+    const y  = (GAME_H - sp.height) / 2 - 40;
+    ctx.drawImage(sp, x, y);
+
+    // score panel below game over text
+    this._drawScorePanel(GAME_W / 2, y + sp.height + 14);
+
+    this._drawTapHint(GAME_W / 2, y + sp.height + 90);
+  },
+
+  _drawScorePanel(cx, panelY) {
+    const pw = 200;
+    const ph = 58;
+    const px = cx - pw / 2;
+
+    // panel bg
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    _roundRect(px, panelY, pw, ph, 8);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth   = 1.5;
+    _roundRect(px, panelY, pw, ph, 8);
+    ctx.stroke();
+
+    // scores
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font         = '12px "Press Start 2P", monospace';
+
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`SCORE: ${this.score.curr}`, cx, panelY + 18);
+
+    ctx.fillStyle   = '#FFD700';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 6;
+    ctx.fillText(`BEST: ${this.score.best}`, cx, panelY + 40);
+    ctx.shadowBlur = 0;
+  },
+
+  drawPlayScore() {
+    // live score shown during play
+    ctx.save();
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    ctx.font         = '28px "Press Start 2P", monospace';
+
+    // shadow pass
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText(this.score.curr, GAME_W / 2 + 2, 26);
+    // main text
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(this.score.curr, GAME_W / 2, 24);
+    ctx.restore();
   },
 };
 
 
 // ─────────────────────────────────────────────
-//  SCORE DISPLAY
-// ─────────────────────────────────────────────
-function drawHUD() {
-  if (state !== STATE.PLAYING) return;
-  ctx.save();
-  ctx.textAlign  = 'center';
-  ctx.textBaseline = 'top';
-
-  const fSize = Math.max(18, canvas.width * 0.11);
-  ctx.font = `${fSize}px 'Press Start 2P', monospace`;
-
-  // shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillText(score, canvas.width / 2 + 3, canvas.height * 0.045 + 3);
-  // main text
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(score, canvas.width / 2, canvas.height * 0.045);
-
-  ctx.restore();
-}
-
-
-// ─────────────────────────────────────────────
-//  MENU SCREEN
-// ─────────────────────────────────────────────
-function drawMenu() {
-  ctx.save();
-  ctx.textAlign = 'center';
-
-  // big title — two lines with different colors
-  const titleSize = Math.max(22, canvas.width * 0.115);
-  ctx.font        = `${titleSize}px 'Press Start 2P', monospace`;
-
-  // glow pass
-  ctx.save();
-  ctx.shadowColor = '#FFD000';
-  ctx.shadowBlur  = 22;
-  ctx.fillStyle   = '#FFD000';
-  ctx.fillText('FAP', canvas.width / 2, canvas.height * 0.25);
-  ctx.shadowColor = '#FF5522';
-  ctx.fillStyle   = '#FF6633';
-  ctx.fillText('BIRD', canvas.width / 2, canvas.height * 0.36);
-  ctx.shadowBlur = 0;
-  ctx.restore();
-
-  // tap to play — pulsing opacity
-  const pulse    = 0.45 + Math.sin(frames * 0.09) * 0.45;
-  const subSize  = Math.max(8, canvas.width * 0.042);
-  ctx.font       = `${subSize}px 'Press Start 2P', monospace`;
-  ctx.globalAlpha = pulse;
-  ctx.fillStyle  = '#ffffff';
-  ctx.fillText('TAP TO PLAY', canvas.width / 2, canvas.height * 0.70);
-  ctx.globalAlpha = 1;
-
-  // controls hint — tiny
-  const hintSize = Math.max(6, canvas.width * 0.032);
-  ctx.font       = `${hintSize}px 'Press Start 2P', monospace`;
-  ctx.fillStyle  = 'rgba(255,255,255,0.4)';
-  ctx.fillText('SPACE / W / ↑  also work', canvas.width / 2, canvas.height * 0.77);
-
-  // best score
-  if (bestScore > 0) {
-    const bsSize = Math.max(8, canvas.width * 0.040);
-    ctx.font      = `${bsSize}px 'Press Start 2P', monospace`;
-    ctx.fillStyle = '#FFD000';
-    ctx.shadowColor = '#FFD000';
-    ctx.shadowBlur  = 8;
-    ctx.fillText(`BEST: ${bestScore}`, canvas.width / 2, canvas.height * 0.84);
-    ctx.shadowBlur = 0;
-  }
-
-  ctx.restore();
-}
-
-
-// ─────────────────────────────────────────────
-//  GAME OVER SCREEN
-// ─────────────────────────────────────────────
-function drawGameOver() {
-  // darken overlay
-  ctx.fillStyle = 'rgba(0,0,0,0.52)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save();
-  ctx.textAlign = 'center';
-
-  const bigSize = Math.max(18, canvas.width * 0.096);
-  ctx.font      = `${bigSize}px 'Press Start 2P', monospace`;
-
-  // game over text with red glow
-  ctx.save();
-  ctx.shadowColor = '#FF3333';
-  ctx.shadowBlur  = 24;
-  ctx.fillStyle   = '#FF4444';
-  ctx.fillText('GAME', canvas.width / 2, canvas.height * 0.31);
-  ctx.fillText('OVER', canvas.width / 2, canvas.height * 0.42);
-  ctx.shadowBlur = 0;
-  ctx.restore();
-
-  // score panel — hand drawn panel feel
-  const pW = canvas.width * 0.76;
-  const pH = canvas.height * 0.18;
-  const pX = (canvas.width - pW) / 2;
-  const pY = canvas.height * 0.51;
-
-  ctx.fillStyle   = 'rgba(10, 15, 30, 0.85)';
-  ctx.strokeStyle = 'rgba(0, 200, 80, 0.5)';
-  ctx.lineWidth   = 2;
-  _roundRect(pX, pY, pW, pH, 6);
-  ctx.fill();
-  ctx.stroke();
-
-  const sSize = Math.max(8, canvas.width * 0.042);
-  ctx.font      = `${sSize}px 'Press Start 2P', monospace`;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, pY + pH * 0.3);
-  ctx.fillStyle   = '#FFD000';
-  ctx.shadowColor = '#FFD000';
-  ctx.shadowBlur  = 6;
-  ctx.fillText(`BEST: ${bestScore}`, canvas.width / 2, pY + pH * 0.68);
-  ctx.shadowBlur = 0;
-
-  // tap to retry
-  const pulse    = 0.45 + Math.sin(frames * 0.11) * 0.45;
-  const retSize  = Math.max(7, canvas.width * 0.038);
-  ctx.font       = `${retSize}px 'Press Start 2P', monospace`;
-  ctx.globalAlpha = pulse;
-  ctx.fillStyle  = '#ffffff';
-  ctx.fillText('TAP TO RETRY', canvas.width / 2, canvas.height * 0.83);
-  ctx.globalAlpha = 1;
-
-  ctx.restore();
-}
-
-// helper — ctx doesn't have native rounded rects in all browsers
-function _roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
-
-
-// ─────────────────────────────────────────────
-//  SCORE PERSISTENCE
+//  SCORE SAVE/LOAD  (localStorage with fallback)
 // ─────────────────────────────────────────────
 function _saveBest() {
   try {
-    bestScore = Math.max(score, parseInt(localStorage.getItem('fapbird-best') || '0'));
-    localStorage.setItem('fapbird-best', bestScore);
+    UI.score.best = Math.max(UI.score.curr, parseInt(localStorage.getItem('fapbird-best') || '0'));
+    localStorage.setItem('fapbird-best', UI.score.best);
   } catch (e) {
-    // private browsing or blocked storage — just keep in memory
-    bestScore = Math.max(score, bestScore);
+    UI.score.best = Math.max(UI.score.curr, UI.score.best);
   }
 }
 
 function _loadBest() {
   try {
-    bestScore = parseInt(localStorage.getItem('fapbird-best') || '0') || 0;
+    UI.score.best = parseInt(localStorage.getItem('fapbird-best') || '0') || 0;
   } catch (e) {
-    bestScore = 0;
+    UI.score.best = 0;
   }
 }
 
 
 // ─────────────────────────────────────────────
-//  INPUT HANDLING
-//  click, touch, and keyboard all do the same thing
+//  INPUT
+//  Click, touch, keyboard — all funnel to one handler
 // ─────────────────────────────────────────────
-let inputCooldown = 0;  // prevent double-firing
+let lastInput = 0;  // debounce accidental double-fires
 
 function handleInput() {
-  if (Date.now() - inputCooldown < 80) return;
-  inputCooldown = Date.now();
-
-  // init audio on first interaction (browser requires user gesture)
-  if (!audioCtx) initAudio();
+  const now = Date.now();
+  if (now - lastInput < 90) return;
+  lastInput = now;
 
   switch (state) {
-    case STATE.MENU:
-      _startGame();
+    case STATE.READY:
+      state = STATE.PLAY;
+      SFX.start.play();
       break;
-    case STATE.PLAYING:
+
+    case STATE.PLAY:
       bird.flap();
       break;
+
     case STATE.DEAD:
-      // brief delay check so you don't accidentally restart mid-animation
-      if (!bird.alive && bird.vy === 0) {
-        _startGame();
+      // wait until bird has fully landed before allowing restart
+      if (bird.vy === 0) {
+        _restartGame();
       }
       break;
   }
 }
 
-function _startGame() {
-  score     = 0;
-  gameSpeed = 2.8;
-  state     = STATE.PLAYING;
-  bird.init();
+function _restartGame() {
+  state = STATE.READY;
+  dx    = 2.2;
   bird.reset();
   pipes.reset();
   particles.list = [];
+  UI.reset();
+  _loadBest();
 }
 
-canvas.addEventListener('click', handleInput);
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleInput(); }, { passive: false });
+// mouse click
+scrn.addEventListener('click', handleInput);
 
+// touch (prevent default so the page doesn't scroll/zoom)
+scrn.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handleInput();
+}, { passive: false });
+
+// keyboard — Space, W, Up arrow, Enter
 document.addEventListener('keydown', (e) => {
-  // space, W, arrow up, enter
   if ([32, 87, 38, 13].includes(e.keyCode)) {
     e.preventDefault();
     handleInput();
   }
 });
 
+// also make canvas focusable so keydown events reach it on mobile keyboard scenarios
+scrn.tabIndex = 1;
+
 
 // ─────────────────────────────────────────────
-//  RESIZE HANDLER
-//  reinit size-dependent values on window resize
+//  COLLISION  (run each frame during play)
 // ─────────────────────────────────────────────
-window.addEventListener('resize', () => {
-  resizeCanvas();
-  ground.update();
-  bird.init();
-  pipes.init();
-  stars.init();
-  cityBg.init();
-});
+function checkCollision() {
+  if (state !== STATE.PLAY || !bird.alive) return;
+  if (bird.collisionCheck()) {
+    bird._die();
+  }
+}
+
+
+// ─────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────
+function _roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y,     x + w, y + r,     r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x,     y + h, x,     y + h - r, r);
+  ctx.lineTo(x,     y + r);
+  ctx.arcTo(x,     y,     x + r, y,         r);
+  ctx.closePath();
+}
 
 
 // ─────────────────────────────────────────────
 //  MAIN LOOP
+//  update → draw → requestAnimationFrame
 // ─────────────────────────────────────────────
 function loop() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save();
+  // ── update ──
   shake.update();
+  gnd.update();
+  pipes.update();
+  bird.update();
+  particles.update();
+  checkCollision();
+
+  // ── draw ──
+  ctx.save();
   ctx.translate(shake.x, shake.y);
 
-  // draw order: bg → stars → pipes → ground → bird → particles → HUD → UI
-  cityBg.update();
-  cityBg.draw();
-
-  stars.update();
-  stars.draw();
-
-  pipes.update();
+  bg.draw();
   pipes.draw();
-
-  ground.scroll(gameSpeed);
-  ground.draw();
-
-  bird.update();
+  gnd.draw();
   bird.draw();
-
-  particles.update();
   particles.draw();
 
-  drawHUD();
-
-  if (state === STATE.MENU) drawMenu();
-  if (state === STATE.DEAD) drawGameOver();
+  // UI on top of everything
+  if (state === STATE.READY) UI.drawReady();
+  if (state === STATE.PLAY)  UI.drawPlayScore();
+  if (state === STATE.DEAD)  UI.drawDead();
 
   ctx.restore();
 
@@ -1033,12 +764,15 @@ function loop() {
 // ─────────────────────────────────────────────
 //  BOOT
 // ─────────────────────────────────────────────
-resizeCanvas();
 _loadBest();
-ground.init();
-stars.init();
-cityBg.init();
-bird.init();
-pipes.init();
 
-loop();
+// wait for DOM fonts to load before starting so score text looks right
+document.fonts.ready.then(() => {
+  // init ground y position
+  if (SPRITES.ground.complete) {
+    gnd.y = GAME_H - SPRITES.ground.height;
+  } else {
+    SPRITES.ground.onload = () => { gnd.y = GAME_H - SPRITES.ground.height; };
+  }
+  loop();
+});
