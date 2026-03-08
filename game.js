@@ -3,7 +3,8 @@
   ------------------------------------------------------------
   This version features a robust ES6 class architecture, a fixed-timestep 
   game loop for consistent physics across all refresh rates (60Hz/120Hz/144Hz), 
-  Promise-based asset loading, tightly tuned arcade physics, and fixed restart logic.
+  Promise-based asset loading, tightly tuned arcade physics, fixed restart logic,
+  and the restored pulsing game over text.
 */
 
 'use strict';
@@ -491,7 +492,7 @@ class UIManager {
     }
   }
 
-  drawGameOver(ctx, score, bestScore) {
+  drawGameOver(ctx, score, bestScore, frameCount) {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.44)';
     ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
 
@@ -513,6 +514,17 @@ class UIManager {
     ctx.fillText('SCORE  ' + score, CONFIG.width / 2, py + 22);
     ctx.fillStyle = '#FFD700';
     ctx.fillText('BEST   ' + bestScore, CONFIG.width / 2, py + 49);
+    ctx.restore();
+
+    // Pulsing retry prompt
+    const pulse = 0.45 + Math.sin(frameCount * 0.09) * 0.5;
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '9px "Press Start 2P", monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('TAP TO PLAY AGAIN', CONFIG.width / 2, CONFIG.height * 0.85);
     ctx.restore();
   }
 }
@@ -589,8 +601,7 @@ class Game {
           this.bird.flap();
           break;
         case CONFIG.states.DEAD:
-          // Fixed Restart Logic: the 500ms triggerDeath timeout natively prevents instant resetting 
-          // allowing this clean reset condition to work properly.
+          // Fixed Restart Logic
           if (this.bird.vy === 0) {
             this.reset();
           }
@@ -672,7 +683,7 @@ class Game {
     // UI Overlays
     if (this.state === CONFIG.states.READY) this.ui.drawGetReady(this.ctx, this.bestScore);
     if (this.state === CONFIG.states.PLAY)  this.ui.drawScore(this.ctx, this.score);
-    if (this.state === CONFIG.states.DEAD)  this.ui.drawGameOver(this.ctx, this.score, this.bestScore);
+    if (this.state === CONFIG.states.DEAD)  this.ui.drawGameOver(this.ctx, this.score, this.bestScore, this.frameCount);
 
     this.ctx.restore();
   }
