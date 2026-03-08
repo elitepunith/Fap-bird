@@ -1,59 +1,119 @@
-/* * We want the body to take up the entire screen. 
- * The dark background acts as letterboxing for screens that are too wide.
- */
+/* fap-bird styles
+   keeping it simple but intentional — dark, neon, retro arcade */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  /* just in case canvas takes a sec to load */
+  background: radial-gradient(ellipse at center, #0d1b3e 0%, #0a0a1a 100%);
+}
+
 body {
-    margin: 0;
-    padding: 0;
-    background-color: #111; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Press Start 2P', monospace;
+}
+
+#game-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+}
+
+#canvas {
+  display: block;
+  /* crisp pixels on zoom — important for pixel art feel */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  cursor: pointer;
+
+  /* subtle border glow */
+  border: 2px solid rgba(0, 255, 68, 0.3);
+  box-shadow:
+    0 0 20px rgba(0, 255, 68, 0.15),
+    0 0 60px rgba(0, 255, 68, 0.05),
+    inset 0 0 30px rgba(0, 0, 0, 0.5);
+
+  /* on desktop it fills screen, on mobile too */
+  max-width: 100vw;
+  max-height: 100vh;
+}
+
+/* scanline overlay — gives it that old crt monitor look */
+#scanlines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.06) 2px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  z-index: 10;
+}
+
+/* little version tag in the corner */
+#corner-tag {
+  position: fixed;
+  bottom: 12px;
+  right: 14px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: rgba(0, 255, 68, 0.35);
+  letter-spacing: 1px;
+  z-index: 20;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* prevent blue tap highlight on mobile */
+canvas {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+/* on really wide screens, cap the canvas width a bit
+   so it doesn't look absurd on ultrawide monitors */
+@media (min-aspect-ratio: 3/2) {
+  #canvas {
     height: 100vh;
-    width: 100vw;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-family: 'Segoe UI', sans-serif;
-    overflow: hidden; /* Stops the screen from scrolling down when hitting spacebar */
-    touch-action: none; /* Stops mobile from trying to handle swipe gestures */
+    width: auto;
+  }
 }
 
-/* * The canvas keeps its 320x480 aspect ratio but scales up to fill the screen height. 
- * This is the secret to responsive HTML5 games!
- */
-#gameCanvas {
-    height: 100vh;
-    max-width: 100vw;
-    object-fit: contain;
-    background-color: #70c5ce; /* Classic sky blue fallback */
-    box-shadow: 0 0 20px rgba(0,0,0,0.8);
+/* mobile — make sure it's truly fullscreen */
+@media (max-width: 600px) {
+  #canvas {
+    border-width: 1px;
+  }
+  #corner-tag {
+    display: none;
+  }
 }
 
-#ui-layer {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none; /* This allows mouse clicks to pass right through to the canvas underneath */
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    color: white;
-    text-shadow: 2px 2px 4px rgba(0,0,0,1);
+/* little loading flash — hides any initial flicker */
+body {
+  animation: fadeIn 0.3s ease-in;
 }
 
-.hidden { 
-    display: none !important; 
-}
-
-#message {
-    font-size: 24px;
-    font-weight: bold;
-    text-align: center;
-    animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-    0% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.05); opacity: 0.8; }
-    100% { transform: scale(1); opacity: 1; }
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

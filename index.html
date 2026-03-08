@@ -1,19 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Fap-bird</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Fap-Bird 🐦</title>
+
+  <!-- pixel font for that retro arcade feel -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="game-wrapper">
+    <canvas id="canvas"></canvas>
 
-    <canvas id="gameCanvas" width="320" height="480"></canvas>
-    
-    <div id="ui-layer">
-        <div id="message">Tap or Press Space to Start!</div>
-    </div>
+    <!-- scanline overlay for that crt monitor vibe -->
+    <div id="scanlines"></div>
 
-    <script src="game.js"></script>
+    <!-- little corner tag, feels handmade -->
+    <div id="corner-tag">v1.0</div>
+  </div>
+
+  <script src="game.js"></script>
 </body>
 </html>
