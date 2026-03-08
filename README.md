@@ -48,5 +48,3 @@ python3 -m http.server 3000
 ## Credit for assets
 
 Graphical and audio assets inspired by the original Flappy Bird game.
-
-```
